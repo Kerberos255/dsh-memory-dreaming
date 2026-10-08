@@ -19,7 +19,7 @@
   "memoryReviewDays": 180,
   "autoPromote": false,
   "incremental": true,
-  "ownerIdentityId": "",
+  "ownerIdentityId": "owner",
   "recall": true,
   "autoRecall": true,
   "autoRecallMaxItems": 3,

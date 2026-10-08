@@ -1,6 +1,6 @@
 {
   "name": "dsh-memory-dreaming",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "type": "module",
   "license": "MIT",
   "description": "从原生会话整理日常记忆、Dream 与每周复查，保留出处并审阅长期事实。",
@@ -57,6 +57,6 @@
     "node": ">=24"
   },
   "scripts": {
-    "test": "node --test tests/recall-context.test.mjs tests/prompt-recall.test.mjs"
+    "test": "node --test tests/recall-context.test.mjs tests/prompt-recall.test.mjs tests/settings-identity.test.mjs"
   }
 }

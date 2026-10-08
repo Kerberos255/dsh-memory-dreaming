@@ -28,14 +28,7 @@
         "label": "按当前问题自动召回可信事实",
         "group": "跨会话召回",
         "type": "boolean",
-        "help": "已发布事实在同工作区的主人私聊自动召回；Discord 与飞书均默认由首次私聊者自动认领主人，无须手工关联账号。群聊和其他用户不继承。"
-      },
-      {
-        "key": "ownerIdentityId",
-        "label": "统一主人记忆标识",
-        "group": "跨会话召回",
-        "type": "text",
-        "help": "默认 owner，与两个渠道的首次私聊认领自动对应，通常无需修改。仅使用自定义的跨平台身份别名时才需要调整。"
+        "help": "主人由 Channel Core 认领并核验；两渠道共用会话仍需在 Channel Core 关联身份。其他人的私聊与群聊不会召回个人记忆。"
       },
       {
         "key": "autoRecallMaxItems",

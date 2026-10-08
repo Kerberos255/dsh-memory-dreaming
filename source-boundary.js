@@ -13,8 +13,13 @@ export function channelSessionIds(ctx){
   const db=live??new DatabaseSync(filename,{readOnly:true});
   try{
     const sessions=new Set();
-    for(const table of ['bindings','receipts'])
+    // Channel Core keeps verified ownership for rotated, archived DMs.
+    // Preserve their channel provenance even when a future receipt cleanup removes older rows.
+    const tables=new Set(db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(row=>row.name));
+    for(const table of ['bindings','receipts','archived_dm_sessions']){
+      if(!tables.has(table))continue;
       for(const row of db.prepare('SELECT session_id FROM '+table).all())sessions.add(row.session_id);
+    }
     return sessions;
   }finally{if(!live)db.close();}
 }
