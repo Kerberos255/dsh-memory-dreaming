@@ -1,0 +1,62 @@
+{
+  "name": "dsh-memory-dreaming",
+  "version": "0.2.2",
+  "type": "module",
+  "license": "MIT",
+  "description": "从原生会话整理日常记忆、Dream 与每周复查，保留出处并审阅长期事实。",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./config": "./config.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json",
+    "./vector": "./vector.js"
+  },
+  "files": [
+    "*.js",
+    "!client-panel.inc.js",
+    "plugin-settings/",
+    "locale/",
+    "cordis.patch.yml",
+    "config.example.json",
+    "README.md",
+    "config.js",
+    "client.js"
+  ],
+  "peerDependencies": {
+    "@deepseek-ai/dsh-typert-protocol": "0.2.0-rc.2 || 0.2.1-alpha.1",
+    "@deepseek-ai/dsh-client-connection": "0.2.0-rc.2 || 0.2.1-alpha.1",
+    "@deepseek-ai/dsh-client-ui-plugin-manager": "0.2.0-rc.2 || 0.2.1-alpha.1",
+    "@deepseek-ai/dsh-client-ui-primitives": "0.2.0-rc.2 || 0.2.1-alpha.1",
+    "@deepseek-ai/dsh-llm": "0.2.0-rc.2 || 0.2.1-alpha.1",
+    "@deepseek-ai/dsh-session-query": "0.2.0-rc.2 || 0.2.1-alpha.1",
+    "@deepseek-ai/dsh-token-meter": "0.2.0-rc.2 || 0.2.1-alpha.1",
+    "@deepseek-ai/dsh-schedule": "0.2.0-rc.2 || 0.2.1-alpha.1",
+    "@deepseek-ai/dsh-api-session-controller": "0.2.0-rc.2 || 0.2.1-alpha.1",
+    "@deepseek-ai/cordis": "4.0.4 || 4.0.5-alpha.1"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-ui-plugin-manager",
+        "@deepseek-ai/dsh-client-ui-primitives"
+      ]
+    }
+  },
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "node --test tests/recall-context.test.mjs tests/prompt-recall.test.mjs"
+  }
+}

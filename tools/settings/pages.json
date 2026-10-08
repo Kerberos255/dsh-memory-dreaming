@@ -1,0 +1,232 @@
+{
+  "dsh-memory-dreaming": {
+    "rowId": "memory-dreaming",
+    "endpoint": "memoryDreaming",
+    "standalone": true,
+    "title": "Dream 与长期记忆",
+    "description": "从原生会话整理日常记忆、Dream 与每周复查，保留出处并审阅长期事实。",
+    "fields": [
+      {
+        "key": "workspace",
+        "label": "工作区",
+        "type": "text",
+        "help": "留空时使用客户端默认工作区。"
+      },
+      {
+        "key": "agentPreset",
+        "label": "对应 Agent 预设",
+        "type": "text",
+        "help": "只读取此预设在所选工作区的会话，默认 agent。"
+      },
+      {
+        "key": "recall",
+        "label": "启用长期记忆检索",
+        "type": "boolean"
+      },
+      {
+        "key": "autoRecall",
+        "label": "按当前问题自动召回可信事实",
+        "group": "跨会话召回",
+        "type": "boolean",
+        "help": "已发布事实在同工作区的主人私聊自动召回；Discord 与飞书均默认由首次私聊者自动认领主人，无须手工关联账号。群聊和其他用户不继承。"
+      },
+      {
+        "key": "ownerIdentityId",
+        "label": "统一主人记忆标识",
+        "group": "跨会话召回",
+        "type": "text",
+        "help": "默认 owner，与两个渠道的首次私聊认领自动对应，通常无需修改。仅使用自定义的跨平台身份别名时才需要调整。"
+      },
+      {
+        "key": "autoRecallMaxItems",
+        "label": "每次自动召回最多几条",
+        "group": "跨会话召回",
+        "type": "number",
+        "min": 1,
+        "max": 5,
+        "when": {
+          "autoRecall": true
+        },
+        "help": "默认最多 3 条。召回只在有明显关键词命中时触发。"
+      },
+      {
+        "key": "autoRecallMaxChars",
+        "label": "召回总文本预算（字符）",
+        "group": "跨会话召回",
+        "type": "number",
+        "min": 200,
+        "max": 4000,
+        "when": {
+          "autoRecall": true
+        },
+        "help": "默认 1200 字符。已确认记忆在 MEMORY.md 持久化；这里只附加相关事实，不追加全量历史。"
+      },
+      {
+        "key": "autoPromote",
+        "label": "自动晋升高质量候选",
+        "type": "boolean",
+        "help": "默认关闭。开启后，只晋升出处仍有效、达到可信度和独立观察次数且无冲突的事实。"
+      },
+      {
+        "key": "minConfidence",
+        "label": "自动晋升最低可信度",
+        "type": "number",
+        "min": 0.5,
+        "max": 1,
+        "step": "any"
+      },
+      {
+        "key": "minObservations",
+        "label": "自动晋升最低独立观察次数",
+        "type": "number",
+        "min": 1,
+        "max": 20,
+        "help": "同一条消息重复整理不会增加观察次数。",
+        "step": 1
+      },
+      {
+        "key": "candidateDays",
+        "label": "候选有效期（天）",
+        "type": "number",
+        "min": 7,
+        "max": 3650,
+        "step": 1
+      },
+      {
+        "key": "memoryReviewDays",
+        "label": "已发布事实复核周期（天）",
+        "group": "记忆新鲜度",
+        "type": "number",
+        "min": 30,
+        "max": 3650,
+        "help": "默认 180 天。到期的长期事实保留在 MEMORY.md，但暂停自动召回，等待你确认它依然有效；手动检索仍可看到并标记待复核。"
+      },
+      {
+        "key": "incremental",
+        "label": "仅整理尚未处理的新消息",
+        "group": "增量 Dream",
+        "type": "boolean",
+        "help": "按每个任务种类记录成功处理的 Session 消息序号。失败或中断不会标记已处理；关闭后允许重新整理完整时间窗。"
+      },
+      {
+        "key": "automatic",
+        "label": "自动日常记忆、Dream 与每周复查",
+        "type": "boolean",
+        "help": "使用官方自动任务；开启后会按时调用模型，并在原生会话保留执行过程。"
+      },
+      {
+        "key": "timeZone",
+        "label": "任务时区",
+        "type": "text",
+        "help": "例如 Asia/Shanghai。"
+      },
+      {
+        "key": "dailyTime",
+        "label": "每日记忆时间",
+        "type": "text",
+        "help": "HH:mm:ss"
+      },
+      {
+        "key": "dreamTime",
+        "label": "Dream 整理时间",
+        "type": "text",
+        "help": "HH:mm:ss"
+      },
+      {
+        "key": "weeklyTime",
+        "label": "每周复查时间",
+        "type": "text",
+        "help": "HH:mm:ss"
+      },
+      {
+        "key": "weeklyDay",
+        "label": "每周复查日期",
+        "type": "select",
+        "numeric": true,
+        "options": [
+          [
+            1,
+            "星期一"
+          ],
+          [
+            2,
+            "星期二"
+          ],
+          [
+            3,
+            "星期三"
+          ],
+          [
+            4,
+            "星期四"
+          ],
+          [
+            5,
+            "星期五"
+          ],
+          [
+            6,
+            "星期六"
+          ],
+          [
+            7,
+            "星期日"
+          ]
+        ]
+      },
+      {
+        "key": "model",
+        "providerKey": "modelProvider",
+        "label": "整理模型",
+        "type": "model"
+      },
+      {
+        "key": "maxOutputTokens",
+        "label": "单次整理最大输出 token",
+        "type": "number",
+        "min": 256,
+        "max": 16384,
+        "step": 1
+      },
+      {
+        "key": "maxInputTokens",
+        "label": "单次整理输入 token 上限",
+        "type": "number",
+        "min": 1000,
+        "max": 65536,
+        "help": "同时受实际模型窗口限制。",
+        "step": 1
+      },
+      {
+        "key": "maxSessions",
+        "label": "每轮最多扫描会话数",
+        "type": "number",
+        "min": 1,
+        "max": 100,
+        "step": 1
+      },
+      {
+        "key": "maxCandidates",
+        "label": "每工作区最多有效候选数",
+        "type": "number",
+        "min": 10,
+        "max": 5000,
+        "step": 1
+      },
+      {
+        "key": "embeddingModel",
+        "providerKey": "embeddingProvider",
+        "kind": "embedding",
+        "label": "Embedding 模型",
+        "type": "model",
+        "help": "从已注册的向量模型选择；提供方不可用时回退到词语检索。"
+      },
+      {
+        "key": "vectorStore",
+        "label": "向量存储 ID",
+        "type": "text",
+        "help": "默认 sqlite；可由其他插件提供替代存储。"
+      }
+    ]
+  }
+}
