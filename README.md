@@ -1,82 +1,49 @@
-# Dream 与长期记忆
+# Dream & Memory for DeepSeek Harness
 
-使用 DSH 原生 Session Query 整理同一工作区、经身份核验的真实用户消息，不再要求来源 Session 使用相同 Agent 预设。每日记忆写入 `memory/YYYY-MM-DD.md`，Dream 写入 `DREAMS.md`，周一归档写入 `memory/weekly/YYYY-MM-DD_YYYY-MM-DD.md`，然后将当周原日记安全暂存 14 天。确认后的稳定事实加入 `MEMORY.md`；人工维护的其他段落保留。
+[简体中文](README.zh-CN.md) · [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) · [Security](SECURITY.md)
 
-设置入口：设置 → 插件 → Dream 与长期记忆。配置在 DSH 数据目录旁的 `plugins/dsh-memory-dreaming/config.json`，正常只需保存。整理模型通过单个下拉框选择官方已配置的模型，提供方与模型 ID 一起保存；留空使用官方默认模型。
-对于 OpenCode Go 等要求会话标识的模型路由，手动和自动任务均使用同一个真实的维护 Session ID，使 DSH 的 pi-ai 适配器自动加上 `x-opencode-session` 请求头。无需单独配置凭证或修改请求头。
+Turn verified DSH conversations into **daily journals, Dream consolidations, weekly reviews, and searchable long-term memory**, without loading whole conversations into every prompt.
 
-自动任务与自动晋升默认关闭；用户可手动整理、查看候选及原始消息出处、确认晋升或遗忘。自动晋升还要求可信度、多个独立观察、有效来源、无冲突及未过期。同一消息重复整理不会增加观察次数。候选不会自动拼进系统提示词；只有已发布的 Markdown 和明确记忆检索参与上下文。
+## Memory lifecycle
 
-普通会话调用 `memory_dream` 只读取自身原文并生成待审候选，不能借此读取其他私聊或写入共享记忆文件。工作区级归档由已认证的设置页操作或插件创建的自动任务执行。工作区文件及已发布长期记忆是该工作区的共享内容；需要多个独立用户环境时应配置各自工作区与预设。
+1. **Daily journal:** summarize eligible user messages into `memory/YYYY-MM-DD.md`.
+2. **Dream:** consolidate recent experiences into `DREAMS.md` and candidate facts.
+3. **Long-term memory:** verify source evidence and publish approved facts to managed sections of `MEMORY.md`.
+4. **Recall:** fetch a few relevant published facts from the current authorized workspace; optional embeddings complement keyword search.
+5. **Weekly review:** merge the previous week's daily journals, track coverage, and safely archive eligible daily files.
 
-自动任务复用官方 Schedule，不另建定时器。执行账本区分投递、运行、等待提问或审批、完成、失败、取消；仅收到任务不算成功。停用设置或卸载插件会收尾任务。卸载清除自己创建的 Schedule；重新加载时按照配置恢复三个任务，原生任务 ID 可能更新，既有运行记录保留。
+The original native DSH session log remains the evidence source. Candidate memories are not automatically treated as facts, and retrieved user content is not trusted as instructions.
 
-自动模板先保存创建/修改/删除意图，再调用原生 Schedule；重新加载按持久标记认领既有任务，原生任务的外部修改和删除会提示核对。重复投递按工作区、预设、任务类型和计划时间去重，日期与时区在投递时封存。原生问答仍待回答时恢复等待状态，已被原生接纳的回答可以在下一轮继续同一任务；冷启动不会代替用户批准操作。只有原生轮次成功结束、关联记忆作业完成且产物校验通过，才记为完成。
+## Requirements and install
 
-设置页“自动任务与执行记录 → 核对自动任务记录”可检查模板和原生轮次。移除本插件拥有的任务前，保存原生保留历史中最多 200 条投递摘要；摘要缺失或超出窗口会说明，摘要本身不证明执行成功。中断作业保留已提交产物，用户审阅后可手动整理。
+Requires a DSH host with native session query, scheduling and model services; see [package.json](package.json) for runtime and peer requirements.
 
-数据放在 `DSH_HOME/memory-dreaming/state.sqlite`。写入前记录提交意图，再交换文件并更新候选；进程退出后会核对文件和数据库，保留已提交产物，不自动重跑模型。外部修改会显示在本页“记忆写入恢复”，可查看写入前、预期内容与当前文件，再重新核对或明确放弃尚未提交的操作。同一工作区/预设的整理和记忆文件发布使用 SQLite 租约，进程退出后由系统释放。
+```sh
+dsh plugin --profile desktop add github:Kerberos255/dsh-memory-dreaming
+```
 
-词语检索默认可用；可选由其他插件注册 `EmbeddingProvider` 或 `VectorStore`，默认向量存储为同库 SQLite。Embedding 下拉框优先复用 DSH `llm-pi-ai` 已配置的 OpenAI-compatible 向量模型（包括 SiliconFlow `BAAI/bge-m3`），从官方凭证服务获取现有 API Key，不再单独录入密钥；也列出其他插件自行注册的向量提供方。仅识别为 Embedding 的模型会进入向量目录；没有可用模型时保留词语检索选项。未注册提供方、异常和超时会回退到词语检索；更换提供方版本或模型后可重建。遗忘在同一事务中删除本地向量；外部存储清理进入持久队列，提供方重新注册或点击“重试向量清理”后继续，失败期间事实已被排除。索引途中遗忘会阻止迟到写入重新加入事实。提供方接口通过服务的 `registerEmbeddingProvider(name,{version,models:[{id,name}],embed({texts,model,signal})})` 和 `registerVectorStore(name,{get,upsert,list,remove,prune})` 注册，返回注销函数；模型目录也可使用异步 `listModels(signal)`，模型项为 ID 字符串或 `{id,name}`。异步实现应响应 `signal` 并支持重复删除，向量不作为事实真源。
+Use your actual profile and restart after installing or updating code.
 
-首次安装或升级代码需要完整退出、重新打开客户端。兼容官方桌面 `0.2.0-rc.2`、开发 SDK `0.2.1-alpha.1`。本插件独立实现，参考 OpenClaw 的差量整理、来源核验、去重与候选晋升思想，未复制其私有运行状态。
+## Quick start
 
-## 跨会话可信记忆自动召回
+1. Open **Settings → Plugins → Dream & Memory**. Choose an available summarization model.
+2. Start with the manual daily/Dream/weekly actions and inspect eligible-source diagnostics and proposed facts.
+3. Review the candidate list and publish verified facts, or deliberately enable automatic promotion with its evidence checks.
+4. Enable the built-in DSH scheduled jobs only when wanted; **scheduled processing and automatic fact promotion are off by default**.
+5. For private Discord/Feishu sources, configure [Channel Core](https://github.com/Kerberos255/dsh-channel-core) owner verification first.
 
-**设计分层：** Dream 提取候选 → 出处核验、人工审阅/按阈值自动晋升 → 发布到同工作区的 `MEMORY.md` → 后续本地会话按当前消息确定性挑选最多 3 条相关事实，放入独立的 system prompt 参考区。未批准候选、旧 Session 原始对话、工具内容不直接自动注入。
+By default, published facts can be recalled automatically in small bounded amounts. The plugin supports keyword retrieval without an embedding model; an optional embedding provider may improve semantic matching.
 
-- 同一工作区内的 Agent 预设不再限制来源与召回；Discord/飞书会话仍须由 Channel Core 核验为主人，非主人私聊及群聊不能召回个人记忆。后台维护 Session 的预设 ID 仍由内部配置保存，用于保证已有任务和记忆作用域不被破坏。
-- 自动提示并不访问原始历史，也不跨 Agent/工作区；原文需要人工或有权限工具的明确检索。已确认事实的返回附 Session ID 和原生事件序号，便于查证，不将数据中的命令当成指令。
-- `memory_search` 继续只检索已发布记忆；改为词语 + 可选向量相似度真正融合排名。Embedding 未配置或失败则只走关键词，使用时应在设置页核对 provider 的状态，别假定是语义搜索。
-- 设置：`autoRecall`、`autoRecallMaxItems`、`autoRecallMaxChars`，默认开启本地自动召回，最多 3 条 / 1200 字符。系统提示词只带入与当前问题相关的少量事实，不会增加第二份 Session 历史。
-- 自动每日 Dream `automatic` 继续独立控制，默认不替用户开启；只有已发布事实才可用于自动召回。
+## Storage and safety
 
+State and write recovery are managed in local SQLite under DSH data; managed journals, Dream output and `MEMORY.md` remain regular workspace Markdown. Source identity, workspace authorization, incremental cursors, atomic writes, and hash checks protect publication and cleanup. Archived eligible daily entries are retained temporarily before removal; human-edited files are preserved.
 
-## 跨渠道主人身份与分层记忆
+An on-demand `memory_dream` tool is **not** permission to inspect unrelated private conversations. Live model and scheduling results must be checked in DSH; standalone CI covers mock-based behavior.
 
-飞书和 Discord 的主人由 Channel Core 统一认领与核验：默认可由首位符合接收规则的私聊者认领，也可以按渠道设置由管理者指定。两个渠道共用会话时，在 Channel Core 建立身份关联。Dream 只查询核验结果，底层沿用 `owner` 标识，不要求填写第二份主人身份；更换主人后，旧主人的记忆访问会立即失效。
+## Development
 
-- 避免在允许所有用户私聊的情况下，把 `MEMORY.md` 当作公共系统提示词。对于已核验主人，`dsh-instruction-files` 仅加载人工维护段落；受管事实仍通过 Memory 的按问题召回，防止双重加载。
-- 每种 Dream 任务有独立的 Session/事件增量游标，**仅在完整成功且没有拒收候选时**标记实际纳入模型输入的事件；出错后继续补做。
-- SQLite `memory_fact_versions` 记录发布、替换、遗忘及复核时间，当前事实仍由 `MEMORY.md` 已发布区块确认。复核到期暂不自动注入，手工检索和审阅页仍可查看，再点击“确认仍有效”更新复核时间。
-- `memory_topics` 提供只读主题目录，`memory_search` 提供细节；不因为项目历史变多而每轮装入全部记忆。
+Run `npm test` for portable tests. Config template: [config.example.json](config.example.json). Historical changes: [CHANGELOG.md](CHANGELOG.md).
 
-## 自动任务的工作区归属与权限
+Related: [Channel Core](https://github.com/Kerberos255/dsh-channel-core) · [Instruction Files](https://github.com/Kerberos255/dsh-instruction-files) · [Lossless Context](https://github.com/Kerberos255/dsh-lossless-context).
 
-手动每日 / Dream / 每周和自动定时任务复用一个独立维护 Session，以 DSH 原生 `workspaceId` 关联已登记工作区，不再创建「未分组」会话；标题为「自动记忆 · 每日 / Dream / 每周复查」，保留人工命名。维护会话只能调用 `memory_dream`；插件不会替它自动批准执行命令、技能修复或扩大工作区访问权限。原生 Schedule 的任务标题分别保留每日记忆、梦境整理和每周记忆复查。未登记工作区时拒绝创建未分组的替代会话，并在设置页显示任务阻塞原因。
-
-## 手动记忆整理与自动任务账本
-
-设置页「整理今日记忆」「Dream 整理」「复查本周」先创建或复用与自动 Schedule 相同的维护 Session，再通过原生 `sessionController.prompt` 以 `mode=queue` 投递独立 Turn；无论 automatic 开关是否开启，手动请求都可以正式整理完整工作区来源，并沿用同一 `memory_dream` 工具、产物提交与可恢复工作流账本（origin=manual / scheduled 区分）。手动请求先持久登记唯一 ID，原生用户消息的 requestId 与完整文本均核对成功后才认领，不接受伪造提示词；在执行中也不允许并发启动同工作区的第二项记忆任务。已归档的插件专用维护 Session 会由原生工作区接口恢复，普通 Session 不受影响。手动结果在设置页独立显示已入队、执行中、成功、失败、取消、待审及产物；原生会话中的每个 Turn 可供事后查验。未注册工作区或原生 Session 接口不可用时明确报错，不退回后台偷偷调用模型。
-
-## 无新来源时的诊断（0.2.10）
-
-手动点击「整理今日记忆」只处理配置时区当天的用户消息。没有符合条件的来源时，按渠道主人身份、工作区、日期、增量去重、事件类型和文本有效性显示具体原因，不记录被拒绝会话的正文；渠道消息依然必须通过 Channel Core 身份核验。
-
-## 工作区全量来源与分批整理（0.2.11）
-
-每日记忆按 Asia/Shanghai 当日筛选、Dream 按配置的回顾窗口筛选、每周复查按本周筛选。三者均遍历**当前工作区内所有可访问的普通和子目录 Session**（跨 Agent 预设），不再因为每轮最多 30 个 Session 或单个 Session 超过 60 条消息静默跳过。`maxSessions` 只作为单批模型调用的最大 Session 数；实际按消息与 token 预算自动分批。只有符合 Channel Core 主人核验的渠道私聊参与整理；自动维护 Session、子代理、工具事件等仍不参与。
-
-分批模型调用在本轮全部成功后才提交报告与已处理来源。模型若达到输出 tokens 上限或返回非 JSON，会自动对多条输入继续拆批；单条仍失败则报告明确原因，不写入不完整报告，也不把来源标为已处理。手动执行完成后显示处理过的 Session、用户消息与模型批次数量。大工作区可能产生多次模型调用。
-
-## 模型流失败诊断（0.2.12）
-
-DSH 模型流的终止事件不仅有 `reason.kind`，还可能附带 `reason.failure`（错误代码与 HTTP 状态）。Dream 现在会保留并提示安全的结构化错误标识，区分额度不足、限流、凭证、网络、上下文超限及适配器故障；不会将原始供应商错误文本、凭证或会话内容输出到提示及日志。模型提供方、模型 ID 与已保存凭证均保持不变。
-
-## 0.2.15 手动整理原生投递修复
-
-修复 0.2.14 手动点击整理时报 `Cannot read properties of undefined (reading 'throwIfAborted')`：DSH 官方 `sessionController.prompt(request, signal)` 要求第二个位置参数必须是有效 `AbortSignal`，现沿用 `MemoryDreaming.operation()` 的合并取消信号并传入。官方 `sessionController.create(request)` 没有 signal 参数，不添加无效字段。测试使用严格 mock 模拟原生 API，在未传 signal 时主动失败，另覆盖已取消和信号引用一致性。记忆模型配置、工作流与历史数据不变。
-
-## 0.2.16 自适应输出预算
-
-`maxOutputTokens` 作为模型整理调用的**初次输出预算**，不是强制生成长度；模型正常完成 JSON 就立即停止。多个来源的请求若达到 `max-tokens`，优先拆分来源以避免浪费输出。单条来源达到 `max-tokens` 时按 2 倍逐级增加（例如 4096 → 8192 → 16384，或现有 8192 → 16384），不超过插件安全上限 16384、模型声明的默认输出额度、或模型上下文剩余空间。每次增加都会重新请求该来源，但不会在成功前写入任何不完整报告或标记来源已处理；仍截断时报告尝试过的额度，而不返回伪成功。模型选择和当前保存的 `maxOutputTokens` 配置均不自动修改。每日、Dream、每周任务仍提取事实，但仅要求当前任务类型对应的一个短记字段，减少无用的 JSON 输出。
-
-## 0.2.17 自动任务会话归档接棒
-
-同一工作区、同一 Agent 预设有一个持久的当前维护 Session 绑定。正常运行继续复用；用户归档当前维护 Session 时，DSH 原生 Schedule 会停止并删除绑定任务。Dream 监听原生 `schedule/changed`，仅在注册表已确认**当前维护 Session 被归档**、或原生 Session Query 确认**曾建立的维护 Session 已不存在**，且旧任务均不再活动时，保留原会话归档状态、创建一个新的维护 Session、重建三条原生计划；绝不创建第二套计时器。旧会话的记忆文件、工作流账本、历史投递摘要和核验绑定继续保留。重启时根据持久 Session 绑定恢复，不重复创建；新会话也保持来源/工作区/预设核验。仅用户手动删除/停用单条原生任务时不会自动重建，而是保留需核对状态；主动关闭自动整理仍按原设置移除本插件的计划。设置页手动整理也优先使用当前有效维护 Session，避免将用户已归档的旧 Session 悄悄取消归档。
-
-## 0.2.18 每周日记归档与安全清理
-
-每日自动计划设为 **00:15**，其输入日期是计划触发日的**前一个本地自然日**；手动「整理今日记忆」仍整理用户指定的日期。周一 **04:30** 整理刚结束的**上周一至周日**，先读取 `memory/YYYY-MM-DD.md` 日记而非直接拿原始 Session 生成周记；若某天无日记，检查原始 Session 的合规用户消息，存在消息则补齐日记，无消息则在周记日期覆盖清单标识空白日。日记作为不可信模型输入，不得将其中指令当作命令。周记按日期范围写入 `memory/weekly/起始日期_结束日期.md`，不限过去的 250 字短记规则，但需结构化汇总项目进展、决策、待办、日期来源。
-
-所有日记必须通过受管标记检查；有人手工加字或内容改变则禁止自动移动。周记先用现有 MemoryCommits 原子提交，再将周记及七日日记的哈希录入持久 SQLite 归档账本，最后同卷原子移动每份实际存在的日记到 `memory/.archive/daily/`。进程中断后仅校验哈希、恢复剩余移动，不调用模型、不重复摘要。保留 14 天，届时在任一次记忆任务中核对文件内容哈希后清理临时备份；如果备份被人工修改则停止清理、显示待核对信息。未发生用户消息的日期不创建空日记，旧版 `memory/reviews/` 由用户自行保留或迁移，不自动删除。已归档的周记不会再次压缩，避免反复摘要失真。周归档仍单独扫描原始合规 Session 来验证长期候选的引用，绝不将压缩日记当成长期事实的原始证据。历史维护 Session 和 Dream 模型、Embedding、自动晋升规则不改。
+MIT licensed. See [LICENSE](LICENSE).
