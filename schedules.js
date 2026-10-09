@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { digest, workspace, scopeId } from './workspace-io.js';
 import { maintenanceSession, workflowKinds } from './workflows.js';
+import { ensureMaintenanceSession } from './session-setup.js';
 
 const labels={daily:'每日记忆',dream:'梦境整理',weekly:'每周记忆复查'};
-const legacyPrompt=kind=>`[dsh-memory-workflow:${kind}]\n执行 memory_dream，kind 为 ${kind}。只使用当前工作区、预设的真实会话来源。没有新材料时不创建空文件。完成后简短报告产物；需要审批或用户信息时保留待确认状态。`;
+const legacyPrompt=kind=>`[dsh-memory-workflow:${kind}]\n这是一项 Dream 插件的受管记忆任务，不是文件或环境修复任务。只调用一次 memory_dream 工具（kind=${kind}），从原生会话整理记忆，然后报告返回结果。严禁执行命令、运行 skills、扫描或修复工作区、申请提升权限；若 memory_dream 不可用，直接报告错误并停止，不能用其他工具替代。没有新材料不创建空文件。`;
 const expectedRecord=task=>{const {sessionId,status,lastDelivery,...record}=task;return record;};
 const zone=value=>new Intl.DateTimeFormat('en',{timeZone:value}).resolvedOptions().timeZone;
 const nativeShape=task=>({title:task.title,prompt:task.prompt,kind:task.kind,time:task.time,timeZone:task.timeZone,...task.kind==='weekly'?{weekdays:task.weekdays}:{}});
@@ -14,7 +15,50 @@ export class MemorySchedules {
   this.memory=memory;this.db=memory.db;this.ctx=ctx;this.checkpoint=checkpoint;this.ledger=ledger;
   this.db.exec(`CREATE TABLE IF NOT EXISTS memory_templates(id TEXT PRIMARY KEY,scope TEXT NOT NULL,session TEXT NOT NULL,cwd TEXT NOT NULL,preset TEXT NOT NULL,kind TEXT NOT NULL,token TEXT NOT NULL,task TEXT,request TEXT NOT NULL,native TEXT,state TEXT NOT NULL,note TEXT,baseline TEXT NOT NULL);`);
   this.db.exec(`CREATE TABLE IF NOT EXISTS memory_schedule_history(task TEXT PRIMARY KEY,template TEXT NOT NULL,checked INTEGER NOT NULL,incomplete INTEGER NOT NULL);
-   CREATE TABLE IF NOT EXISTS memory_schedule_receipts(template TEXT NOT NULL,task TEXT NOT NULL,message TEXT NOT NULL,occurrence TEXT NOT NULL,delivered TEXT NOT NULL,PRIMARY KEY(task,message));`);
+   CREATE TABLE IF NOT EXISTS memory_schedule_receipts(template TEXT NOT NULL,task TEXT NOT NULL,message TEXT NOT NULL,occurrence TEXT NOT NULL,delivered TEXT NOT NULL,PRIMARY KEY(task,message));
+   CREATE TABLE IF NOT EXISTS memory_schedule_bindings(scope TEXT PRIMARY KEY,session TEXT NOT NULL);
+   CREATE TABLE IF NOT EXISTS memory_schedule_sessions(session TEXT PRIMARY KEY,scope TEXT NOT NULL);`);
+ }
+ /** The active maintenance session survives restarts; archived generations remain trusted only for history. */
+ sessionId(cwd,preset=this.memory.getConfig().agentPreset){
+  const scope=scopeId(cwd,preset),known=this.db.prepare('SELECT session FROM memory_schedule_bindings WHERE scope=?').get(scope);
+  if(known)return known.session;
+  const previous=this.db.prepare('SELECT session FROM memory_templates WHERE scope=? ORDER BY kind LIMIT 1').get(scope)?.session;
+  const session=previous??maintenanceSession(cwd,preset);
+  this.memory.commits.transaction(()=>{
+   this.db.prepare('INSERT OR IGNORE INTO memory_schedule_bindings VALUES(?,?)').run(scope,session);
+   this.db.prepare('INSERT OR IGNORE INTO memory_schedule_sessions VALUES(?,?)').run(session,scope);
+  });
+  return this.db.prepare('SELECT session FROM memory_schedule_bindings WHERE scope=?').get(scope).session;
+ }
+ archivedBindings(){return this.db.prepare('SELECT session FROM memory_schedule_bindings').all().map(row=>row.session);}
+ /** Repair only a proven archive or a missing previously established Session.
+  * Never repair a task manually deleted from a still-existing Session. */
+ async rotateArchived(schedule,cwd,preset,signal){
+  const scope=scopeId(cwd,preset),session=this.sessionId(cwd,preset);
+  const registry=this.ctx.get?.('workspaceRegistry')??this.ctx.workspaceRegistry;
+  const archived=!!registry?.archivedSessionIds?.includes(session);
+  let missing=false;
+  if(!archived&&typeof this.ctx.sessionQuery?.observeSession==='function'
+   &&this.db.prepare('SELECT 1 FROM memory_templates WHERE scope=? AND session=? LIMIT 1').get(scope,session)){
+   let observation;
+   try{observation=await this.ctx.sessionQuery.observeSession(session,{signal});}
+   catch(error){if(error?.code!=='SESSION_QUERY_SESSION_NOT_FOUND')throw error;missing=true;}
+   finally{observation?.[Symbol.dispose]?.();}
+  }
+  if(!archived&&!missing)return session;
+  signal?.throwIfAborted();
+  const stillActive=(await schedule.catalog()).some(task=>task.sessionId===session&&task.status==='active');
+  if(stillActive)throw new Error('旧维护会话已归档或不存在，等待原生 Schedule 停止其任务后接棒；不会并行创建重复定时任务。');
+  const replacement=maintenanceSession(cwd,preset)+'-'+randomUUID();
+  this.memory.commits.transaction(()=>{
+   // The binding is a journal: a crash after this commit restarts on the new ID.
+   this.db.prepare('INSERT OR IGNORE INTO memory_schedule_sessions VALUES(?,?)').run(session,scope);
+   this.db.prepare('INSERT INTO memory_schedule_sessions VALUES(?,?)').run(replacement,scope);
+   this.db.prepare('UPDATE memory_schedule_bindings SET session=? WHERE scope=? AND session=?').run(replacement,scope,session);
+   this.db.prepare("UPDATE memory_templates SET session=?,task=NULL,native=NULL,state='new',note=NULL,baseline='[]' WHERE scope=? AND session=?").run(replacement,scope,session);
+  });
+  return replacement;
  }
  rows(cwd,preset=this.memory.getConfig().agentPreset){return this.db.prepare('SELECT id,kind,task,state,note FROM memory_templates WHERE scope=? ORDER BY kind').all(scopeId(cwd,preset)).map(row=>({...row,receipts:this.db.prepare('SELECT COUNT(*) AS n FROM memory_schedule_receipts WHERE template=?').get(row.id).n,historyIncomplete:!!this.db.prepare('SELECT 1 FROM memory_schedule_history WHERE template=? AND incomplete=1').get(row.id)}));}
  counts(cwd,preset){const where=cwd?' WHERE scope=?':'',args=cwd?[scopeId(cwd,preset)]:[];return Object.fromEntries(this.db.prepare('SELECT state,COUNT(*) AS count FROM memory_templates'+where+' GROUP BY state').all(...args).map(row=>[row.state,row.count]));}
@@ -59,10 +103,10 @@ export class MemorySchedules {
  }
  async reconcile(schedule,controller,config,signal,valid=()=>true){
   signal?.throwIfAborted();await this.adoptLegacy(schedule,signal);if(!valid())return;let cwd,session,scope;
-  if(config.enabled&&config.automatic){cwd=await workspace(this.ctx,config,signal);scope=scopeId(cwd,config.agentPreset);session=maintenanceSession(cwd,config.agentPreset);}
+  if(config.enabled&&config.automatic){cwd=await workspace(this.ctx,config,signal);scope=scopeId(cwd,config.agentPreset);session=await this.rotateArchived(schedule,cwd,config.agentPreset,signal);}
   for(const row of this.db.prepare('SELECT * FROM memory_templates').all()){if(!valid())return;if(!scope||row.scope!==scope)await this.retire(schedule,row,signal,valid);}
   if(!scope)return;
-  if(!valid())return;await controller.create({sessionId:session,cwd,agentPreset:config.agentPreset});
+  if(!valid())return;await ensureMaintenanceSession(this.ctx,controller,{sessionId:session,cwd,preset:config.agentPreset,signal});
   for(const kind of workflowKinds){
    signal?.throwIfAborted();if(!valid())return;const id=digest(scope+'\0'+kind);let row=this.db.prepare('SELECT * FROM memory_templates WHERE id=?').get(id);
    if(!row){const token=randomUUID(),request=this.request(config,kind,token),catalog=await schedule.catalog();this.db.prepare("INSERT INTO memory_templates VALUES(?,?,?,?,?,?,?,NULL,?,NULL,'new',NULL,?)").run(id,scope,session,cwd,config.agentPreset,kind,token,JSON.stringify(request),JSON.stringify(catalog.filter(task=>task.sessionId===session).map(task=>task.id)));row=this.db.prepare('SELECT * FROM memory_templates WHERE id=?').get(id);}

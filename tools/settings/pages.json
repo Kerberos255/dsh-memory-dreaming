@@ -13,12 +13,6 @@
         "help": "留空时使用客户端默认工作区。"
       },
       {
-        "key": "agentPreset",
-        "label": "对应 Agent 预设",
-        "type": "text",
-        "help": "只读取此预设在所选工作区的会话，默认 agent。"
-      },
-      {
         "key": "recall",
         "label": "启用长期记忆检索",
         "type": "boolean"
@@ -79,7 +73,8 @@
       },
       {
         "key": "candidateDays",
-        "label": "候选有效期（天）",
+        "label": "Dream 回顾天数",
+        "help": "Dream 从本工作区最近若干天的会话提炼记忆；每日定时整理前一天；周一归纳并安全归档上周一至周日的日记。",
         "type": "number",
         "min": 7,
         "max": 3650,
@@ -133,7 +128,7 @@
       },
       {
         "key": "weeklyDay",
-        "label": "每周复查日期",
+        "label": "每周归档日期（建议周一）",
         "type": "select",
         "numeric": true,
         "options": [
@@ -175,7 +170,7 @@
       },
       {
         "key": "maxOutputTokens",
-        "label": "单次整理最大输出 token",
+        "label": "单次整理初始输出 token",
         "type": "number",
         "min": 256,
         "max": 16384,
@@ -192,7 +187,8 @@
       },
       {
         "key": "maxSessions",
-        "label": "每轮最多扫描会话数",
+        "label": "每批最多处理会话数",
+        "help": "整轮会遍历工作区所有符合条件的 Session；此值只限制单次模型调用包含多少个 Session，不再截断整轮来源。",
         "type": "number",
         "min": 1,
         "max": 100,

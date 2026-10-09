@@ -34,7 +34,7 @@ test('channel session cannot auto recall another person shared workspace memorie
  assert.equal(isUntrustedChannel(ctx,session),true);
  assert.equal(authorizedRecallScope(session,ctx,{enabled:true,recall:true,autoRecall:true,agentPreset:'agent',workspace:''}),false);
 });
-test('non-channel scope is same-workspace, same-preset, opt-in and idempotently sourced',()=>{
+test('non-channel scope is same-workspace across presets, opt-in and idempotently sourced',()=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsh-memory-recall-'));
  try{
   const session={id:'desktop',header:{cwd:dir,agentPreset:'agent'},surface:{nodes:[0]},eventAt:()=>({type:'user/message',data:{content:[{type:'text',text:'PageLingo 翻译'}]}})};
@@ -43,7 +43,7 @@ test('non-channel scope is same-workspace, same-preset, opt-in and idempotently 
   assert.equal(authorizedRecallScope(session,ctx,cfg),true);
   assert.equal(recallForSession({recalledCandidates:()=>facts},ctx,session,cfg)[0].id,'pagelingo');
   assert.equal(authorizedRecallScope(session,ctx,{...cfg,autoRecall:false}),false);
-  assert.equal(authorizedRecallScope(session,ctx,{...cfg,agentPreset:'other'}),false);
+  assert.equal(authorizedRecallScope(session,ctx,{...cfg,agentPreset:'other'}),true,'preset does not partition a trusted workspace');
   const second=fs.mkdtempSync(path.join(os.tmpdir(),'dsh-memory-recall-'));
   try{assert.equal(authorizedRecallScope(session,ctx,{...cfg,workspace:second}),false);}
   finally{fs.rmSync(second,{recursive:true,force:true});}

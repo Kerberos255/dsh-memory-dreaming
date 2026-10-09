@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { digest, readBounded, safePath, scopeId } from './workspace-io.js';
+import { shiftDay } from './weekly-archive.js';
 
 export const workflowKinds = ['daily', 'dream', 'weekly'];
 const active = ['delivered', 'running', 'awaiting-user', 'awaiting-approval', 'interrupted', 'needs-review'];
@@ -8,6 +9,10 @@ const textOf = message => (message?.content ?? []).filter(block => block.type ==
 const kindOf = prompt => typeof prompt === 'string' ? /^\[dsh-memory-workflow:(daily|dream|weekly)\](?:\r?\n|$)/.exec(prompt)?.[1] : undefined;
 const instant = value => typeof value === 'string' && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
 export const maintenanceSession = (cwd,preset) => 'session-dsh-memory-' + scopeId(cwd,preset).slice(0,32);
+/** Only the matching native prompt receipt can activate this manual workflow. */
+export const manualPrompt=(kind,requestId,day)=>`[dsh-memory-manual:${requestId}]
+这是用户在 Dream 设置页明确发起的手动记忆整理。只调用一次 memory_dream（kind=${kind}，day=${day}），整理当前工作区经验证的真实会话，写入正式记忆产物，不是 draftOnly。不要执行其他工具、命令或技能，也不要申请提升权限。无新材料则报告空结果。`;
+
 
 // Decode only the official Schedule envelope, never a tag in ordinary user prose.
 export function deliveries(message) {
@@ -28,7 +33,7 @@ export class WorkflowLedger {
  constructor(memory,ctx,checkpoint=()=>{}) {
   this.memory=memory;this.db=memory.db;this.ctx=ctx;this.checkpoint=checkpoint;this.recovery=null;this.closed=false;
   this.db.exec('CREATE TABLE IF NOT EXISTS workflows(id TEXT PRIMARY KEY,session TEXT NOT NULL,kind TEXT NOT NULL,turn INTEGER,state TEXT NOT NULL,updated INTEGER NOT NULL,run TEXT,result TEXT);');
-  for(const [name,type] of Object.entries({scope:'TEXT',cwd:'TEXT',preset:'TEXT',task:'TEXT',occurrence:'TEXT',message:'TEXT',seq:'INTEGER',endSeq:'INTEGER',note:'TEXT',timeZone:'TEXT',historyOnly:'INTEGER NOT NULL DEFAULT 0'})) if(!this.db.prepare('PRAGMA table_info(workflows)').all().some(row=>row.name===name)) this.db.exec('ALTER TABLE workflows ADD COLUMN '+name+' '+type);
+  for(const [name,type] of Object.entries({scope:'TEXT',cwd:'TEXT',preset:'TEXT',task:'TEXT',occurrence:'TEXT',message:'TEXT',seq:'INTEGER',endSeq:'INTEGER',note:'TEXT',timeZone:'TEXT',historyOnly:'INTEGER NOT NULL DEFAULT 0',origin:"TEXT NOT NULL DEFAULT 'scheduled'",prompt:'TEXT',requestedDay:'TEXT'})) if(!this.db.prepare('PRAGMA table_info(workflows)').all().some(row=>row.name===name)) this.db.exec('ALTER TABLE workflows ADD COLUMN '+name+' '+type);
   this.db.exec(`CREATE INDEX IF NOT EXISTS workflow_scope ON workflows(scope,updated);
    CREATE TABLE IF NOT EXISTS workflow_messages(session TEXT NOT NULL,message TEXT NOT NULL,workflow TEXT NOT NULL,turn INTEGER,PRIMARY KEY(session,message,workflow));
    CREATE TABLE IF NOT EXISTS workflow_cursors(session TEXT PRIMARY KEY,scope TEXT NOT NULL,preset TEXT NOT NULL,seq INTEGER NOT NULL,turn INTEGER,inbox TEXT NOT NULL);
@@ -37,13 +42,54 @@ export class WorkflowLedger {
  }
  identity(header,preset) {
   if(!header?.cwd||header.parentSession||header.origin==='subagent'||typeof preset!=='string') return null;
-  try {const cwd=fs.realpathSync(header.cwd),scope=scopeId(cwd,preset);return header.id===maintenanceSession(cwd,preset)?{session:header.id,cwd,preset,scope}:null;} catch {return null;}
+  try {const cwd=fs.realpathSync(header.cwd),scope=scopeId(cwd,preset);
+   const bound=this.db.prepare('SELECT scope FROM memory_schedule_sessions WHERE session=?').get(header.id);
+   const oldId=header.id===maintenanceSession(cwd,preset);
+   return (bound?.scope===scope||oldId)?{session:header.id,cwd,preset,scope}:null;
+  } catch {return null;}
  }
  transaction(fn){return this.memory.commits.transaction(fn);}
  history(identity,records){this.transaction(()=>{for(const record of records){if(!instant(record.occurrence))continue;const id=this.receipt(identity,record.message,record);this.db.prepare("UPDATE workflows SET state='needs-review',historyOnly=1,note=? WHERE id=? AND seq IS NULL AND turn IS NULL AND state='delivered'").run('原生投递摘要已保存；执行状态需核对会话记录。',id);}});}
  cursor(identity){return this.db.prepare('SELECT * FROM workflow_cursors WHERE session=?').get(identity.session)??{...identity,seq:-1,turn:null,inbox:JSON.stringify({'next-turn':[],'next-step':[]})};}
  rows(cwd,preset=this.memory.getConfig().agentPreset){return this.db.prepare('SELECT * FROM workflows WHERE scope=? ORDER BY updated DESC LIMIT 30').all(scopeId(cwd,preset)).map(row=>({...row,result:row.result?JSON.parse(row.result):null}));}
  counts(cwd,preset){const where=cwd?' WHERE scope=?':' WHERE scope IS NOT NULL',args=cwd?[scopeId(cwd,preset)]:[];return Object.fromEntries(this.db.prepare('SELECT state,COUNT(*) AS count FROM workflows'+where+' GROUP BY state').all(...args).map(row=>[row.state,row.count]));}
+ hasActive(cwd,preset=this.memory.getConfig().agentPreset){
+  return !!this.db.prepare("SELECT 1 FROM workflows WHERE scope=? AND state IN ('submitting','delivered','running','awaiting-user','awaiting-approval') AND updated>? LIMIT 1").get(scopeId(cwd,preset),Date.now()-1800000);
+ }
+ queueManual(cwd,preset,kind,requestId,prompt,day,timeZone,sessionId=maintenanceSession(cwd,preset)){
+  if(!workflowKinds.includes(kind)||!/^\d{4}-\d{2}-\d{2}$/.test(day)||!requestId||!prompt)throw new Error('手动任务格式无效');
+  const scope=scopeId(cwd,preset),id=digest(JSON.stringify([scope,'manual',requestId])),session=sessionId;
+  if(!this.identity({id:session,cwd},preset))throw new Error('维护 Session 未经 Dream 绑定核验');
+  const now=Date.now();
+  this.transaction(()=>{
+   if(this.hasActive(cwd,preset))throw new Error('该工作区已有记忆整理任务，请等待完成后再试');
+   this.db.prepare("INSERT INTO workflows(id,session,kind,state,updated,scope,cwd,preset,task,occurrence,message,timeZone,origin,prompt,requestedDay,note) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    .run(id,session,kind,'submitting',now,scope,cwd,preset,'manual:'+requestId,new Date(now).toISOString(),requestId,timeZone,'manual',prompt,day,'正在提交到原生维护 Session');
+  });
+  return{id,session,kind};
+ }
+ admitManual(id){
+  this.db.prepare("UPDATE workflows SET state='delivered',note='已入原生 Session 队列，等待执行',updated=? WHERE id=? AND origin='manual' AND state='submitting'").run(Date.now(),id);
+ }
+ /** Native identity + requestId + exact text are required; copied user text cannot forge a manual receipt. */
+ linkManual(identity,message,turn=null,seq=null){
+  if(message?.source?.kind!=='user'||typeof message.source.rpcId!=='string'||!message.id)return;
+  const row=this.db.prepare("SELECT * FROM workflows WHERE session=? AND scope=? AND origin='manual' AND task=?").get(identity.session,identity.scope,'manual:'+message.source.rpcId);
+  if(!row||textOf(message)!==row.prompt)return;
+  this.db.prepare('INSERT INTO workflow_messages(session,message,workflow,turn) VALUES(?,?,?,?) ON CONFLICT(session,message,workflow) DO UPDATE SET turn=COALESCE(excluded.turn,turn)')
+   .run(identity.session,message.id,row.id,turn);
+  this.db.prepare("UPDATE workflows SET message=?,seq=COALESCE(seq,?),turn=COALESCE(turn,?),state=CASE WHEN ? IS NULL THEN state WHEN state IN ('submitting','delivered') THEN 'running' ELSE state END,updated=?,note=CASE WHEN ? IS NULL THEN note ELSE NULL END WHERE id=?")
+   .run(message.id,seq,turn,turn,Date.now(),turn,row.id);
+ }
+ manualStatus(cwd,preset=this.memory.getConfig().agentPreset){
+  const row=this.db.prepare("SELECT * FROM workflows WHERE scope=? AND origin='manual' ORDER BY updated DESC LIMIT 1").get(scopeId(cwd,preset));
+  if(!row)return null;
+  const job=this.result(row),value=job?.value;
+  return{kind:row.kind,state:row.state,sessionId:row.session,workflow:row.id,
+   message:row.note??value?.error??value?.message??(row.state==='completed'?'记忆整理已完成':'原生维护 Session 正在处理任务'),
+   empty:!!value?.empty,deduplicated:!!value?.deduplicated,artifacts:(value?.artifacts??[]).map(item=>item.path)};
+ }
+
  receipt(identity,message,record,seq=null,turn=null) {
   const id=digest(JSON.stringify([identity.scope,record.kind,record.occurrence])),now=Date.now();
   this.db.prepare(`INSERT OR IGNORE INTO workflows(id,session,kind,turn,state,updated,scope,cwd,preset,task,occurrence,message,seq,timeZone) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(id,identity.session,record.kind,turn,turn===null?'delivered':'running',now,identity.scope,identity.cwd,identity.preset,record.task,record.occurrence,message,seq,record.timeZone??this.memory.getConfig().timeZone);
@@ -57,7 +103,7 @@ export class WorkflowLedger {
  }
  claim(identity,message,turn) {
   if(!identity||!Number.isSafeInteger(turn)) return;
-  this.transaction(()=>{for(const record of deliveries(message)){const id=this.receipt(identity,message.id,record,null,turn);this.db.prepare("UPDATE workflows SET turn=?,state='running',updated=? WHERE id=? AND state='delivered'").run(turn,Date.now(),id);}this.resumeReply(identity,message,turn);});
+  this.transaction(()=>{this.linkManual(identity,message,turn);for(const record of deliveries(message)){const id=this.receipt(identity,message.id,record,null,turn);this.db.prepare("UPDATE workflows SET turn=?,state='running',updated=? WHERE id=? AND state='delivered'").run(turn,Date.now(),id);}this.resumeReply(identity,message,turn);});
  }
  resumeReply(identity,message,turn){
   if(message?.source?.kind!=='user-question-reply') return;
@@ -84,12 +130,13 @@ export class WorkflowLedger {
   if(event.type==='turn/start')cursor.turn=data.turn;
   else if(event.type==='agent/inbox/spliced'){
    const inbox=JSON.parse(cursor.inbox),queue=inbox[data.target];if(!queue)throw new Error('未知原生输入队列');const removed=queue.splice(data.start,data.removedCount??0,...data.inserted.map(message=>message.id));
-   for(const message of data.inserted)for(const record of deliveries(message))this.receipt(identity,message.id,record,event.seq);
+   for(const message of data.inserted){this.linkManual(identity,message,null,event.seq);for(const record of deliveries(message))this.receipt(identity,message.id,record,event.seq);}
    if(data.outcome==='canceled')for(const message of removed)this.db.prepare("UPDATE workflows SET state='cancelled',note=?,updated=? WHERE id IN (SELECT workflow FROM workflow_messages WHERE session=? AND message=?) AND state='delivered'").run('原生队列已取消，任务尚未执行。',Date.now(),session,message);
    // Native claim persists the removal before emitting inbox/claimed. Recover that gap.
    if(data.outcome===undefined&&cursor.turn!==null)for(const message of removed){this.db.prepare('UPDATE workflow_messages SET turn=? WHERE session=? AND message=?').run(cursor.turn,session,message);this.db.prepare("UPDATE workflows SET turn=?,state='running',updated=? WHERE id IN (SELECT workflow FROM workflow_messages WHERE session=? AND message=?) AND state='delivered'").run(cursor.turn,Date.now(),session,message);}
    cursor.inbox=JSON.stringify(inbox);
   }else if(event.type==='user/message'){
+   this.linkManual(identity,data,cursor.turn,event.seq);
    for(const record of deliveries(data)){const id=this.receipt(identity,data.id,record,event.seq,cursor.turn);if(cursor.turn!==null)this.db.prepare("UPDATE workflows SET turn=?,state='running',updated=? WHERE id=? AND state='delivered'").run(cursor.turn,Date.now(),id);}
    if(cursor.turn!==null)this.resumeReply(identity,data,cursor.turn);
   }else if(event.type==='tool/call'){
@@ -124,6 +171,8 @@ export class WorkflowLedger {
  }
  finish(row,reason,seq){
   this.db.prepare('UPDATE workflows SET endSeq=? WHERE id=?').run(seq,row.id);
+  const job=this.result(row);
+  if(job?.state==='failed'){this.set(row.id,'failed',job.value?.error??'记忆整理调用失败');return;}
   if(reason==='aborted'){this.set(row.id,'cancelled','原生轮次已取消。');return;}
   if(reason==='interrupted'||reason==='forked'){this.set(row.id,'interrupted','原生轮次已中断；不会自动重跑记忆作业。');return;}
   if(!['completed','stop'].includes(reason)){this.set(row.id,'failed','原生轮次未成功完成：'+(reason??'unknown'));return;}
@@ -138,16 +187,17 @@ export class WorkflowLedger {
  }
  async run(cwd,kind,exec,options){
   const rows=this.current(exec.agent.session.id,kind);if(!rows.length)return this.memory.run(cwd,kind,{...options,sourceSessionId:exec.agent.session.id,draftOnly:true});
-  const results=[];for(const row of rows){const cached=this.cached(row);if(cached){results.push(cached);continue;}if(['interrupted','needs-review','cancelled','failed'].includes(row.state)){results.push({state:row.state,workflow:row.id,artifacts:[],message:row.note});continue;}
-   const day=new Intl.DateTimeFormat('en-CA',{timeZone:row.timeZone??this.memory.getConfig().timeZone,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(row.occurrence));
+  const results=[];for(const row of rows.filter(row=>row.state!=='cancelled')){const cached=this.cached(row);if(cached){results.push(cached);continue;}if(['interrupted','needs-review','cancelled','failed'].includes(row.state)){results.push({state:row.state,workflow:row.id,artifacts:[],message:row.note});continue;}
+   const scheduledDay=new Intl.DateTimeFormat('en-CA',{timeZone:row.timeZone??this.memory.getConfig().timeZone,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(row.occurrence));
+   const day=row.origin==='manual'?row.requestedDay:kind==='daily'?shiftDay(scheduledDay,-1):scheduledDay;
    const result=await this.memory.run(cwd,kind,{...options,day,timeZone:row.timeZone??this.memory.getConfig().timeZone,onStart:id=>this.bind(row.id,id)});results.push(result);
-  }return results.length===1?results[0]:{...results.at(-1),results};
+  }return results.length===1?results[0]:results.length?{...results.at(-1),results}:{state:'cancelled',artifacts:[],message:'自动归档已关闭。'};
  }
  async recover(signal){
   if(this.recovery)return this.recovery;
   const task=(async()=>{
    const records=await this.ctx.sessionQuery.listSessions(signal);signal?.throwIfAborted();
-   for(const record of records){if(!/^session-dsh-memory-[a-f0-9]{32}$/.test(record.header?.id))continue;
+   for(const record of records){if(!/^session-dsh-memory-[a-f0-9]{32}(?:-[a-f0-9-]{36})?$/.test(record.header?.id))continue;
     let observation;try{observation=await this.ctx.sessionQuery.observeSession(record.header.id,{signal});signal?.throwIfAborted();const identity=this.identity(observation.header,observation.projections?.values.agentPreset);if(!identity){this.db.prepare("UPDATE workflows SET state='needs-review',note=? WHERE session=? AND state IN ('delivered','running','awaiting-user','awaiting-approval','interrupted')").run('原生工作区或预设范围不匹配，保留记录待核对。',record.header.id);continue;}
      for(const event of observation.events){if(event.seq<(observation.inheritedEventCount??0))continue;this.event(identity,event);}
      const questions=observation.projections?.values.userQuestions?.questions?.active??observation.projections?.values.userQuestions?.active??[],continued=new Set(questions.map(row=>row.callId));

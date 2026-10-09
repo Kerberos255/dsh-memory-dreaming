@@ -98,7 +98,8 @@ export function authorizedRecallScope(session,ctx,config){
   if(!config.enabled||!config.recall||!config.autoRecall)return false;
   if(!session?.header?.cwd||session.header.parentSession||session.header.origin==='subagent'||session.id?.startsWith('session-dsh-memory-'))return false;
   const preset=ctx.get?.('sessionProjections')?.stateOf(session,'agentPreset')??session.header.agentPreset;
-  if(preset!==config.agentPreset)return false;
+  // Agent presets do not partition a single owner's workspace memory.
+  if(typeof preset!=='string')return false;
   // Do not allow shared workspace memories to pass into other users' channels.
   const channel=isUntrustedChannel(ctx,session)||channelSessionIds(ctx).has(session.id);
   if(channel&&!ownerChannelAuthorized(ctx,session.id,config))return false;

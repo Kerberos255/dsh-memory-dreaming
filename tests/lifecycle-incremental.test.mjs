@@ -95,3 +95,27 @@ test('incremental Dream processes only accepted events; failed run leaves cursor
   assert.equal(memory.db.prepare('SELECT COUNT(*) as n FROM memory_processed_sources').get().n,2);
  }finally{await memory.close();fs.rmSync(root,{recursive:true,force:true});}
 });
+
+
+test('Dream collects another Agent preset inside the same trusted workspace',async()=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'dsh-cross-preset-memory-'));
+ const config={...schema.defaults,agentPreset:'agent',maxSessions:5};
+ const time=Date.now();
+ const ctx={
+  dshHomePath:(...parts)=>path.join(root,'home',...parts),
+  sessionQuery:{
+   async listSessions(){return[{header:{id:'session-alt',cwd:root,agentPreset:'different'}}];},
+   async observeSession(){return{
+    header:{id:'session-alt',cwd:root},projections:{values:{agentPreset:'different'}},inheritedEventCount:0,
+    events:[{seq:0,type:'user/message',surfaceOp:'append',time,data:{content:[{type:'text',text:'跨预设的项目决策'}]}}],
+    [Symbol.dispose](){},
+   };}
+  }
+ };
+ const memory=new Memory(path.join(root,'state.sqlite'),ctx,()=>config);
+ try{
+  const result=await memory.collect(root,new AbortController().signal,{kind:'dream'});
+  assert.equal(result.length,1);
+  assert.equal(result[0].sessionId,'session-alt');
+ }finally{await memory.close();fs.rmSync(root,{recursive:true,force:true});}
+});
