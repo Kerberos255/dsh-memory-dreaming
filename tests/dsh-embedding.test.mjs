@@ -52,7 +52,7 @@ test('selected DSH model routes to SiliconFlow embeddings endpoint using existin
   assert.equal(h.calls[0].method,'POST');
   assert.equal(h.calls[0].redirect,'error');
   assert.equal(h.calls[0].request.model,'BAAI/bge-m3');
-  assert.equal(h.calls[0].auth,['Bearer','test-placeholder-key'].join(' '));
+  assert.equal(h.calls[0].auth,'Bearer test-placeholder-key');
   assert.equal(h.resolution,1);
  }finally{h.close();}
 });

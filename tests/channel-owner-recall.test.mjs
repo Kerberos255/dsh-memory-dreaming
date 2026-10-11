@@ -54,7 +54,7 @@ test('identity settings are opt-in, validated, and do not enable background Drea
 
 test('settings no longer ask for a second channel owner identity',()=>{
  const config=JSON.parse(fs.readFileSync(new URL('../config.example.json',import.meta.url),'utf8'));
- const pages=JSON.parse(fs.readFileSync(new URL("../tools/settings/pages.json",import.meta.url),'utf8'));
+ const pages=JSON.parse(fs.readFileSync(new URL("../../_shared/plugin-settings/pages.json",import.meta.url),'utf8'));
  const fields=pages['dsh-memory-dreaming'].fields;
  assert.equal(fields.filter(row=>row.key==='ownerIdentityId').length,0);
  assert.equal(config.ownerIdentityId,'owner','generated example must not accidentally disable owner recognition');

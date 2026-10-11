@@ -15,11 +15,12 @@ export default class MemoryDreaming extends PluginConfig {
  static inject=['dshHomePath','workspaceController','sessionQuery','agentDefaultModel','llm','tokenMeter','settings','credentials'];
  constructor(ctx,legacy={}){
   super(ctx,{service:'memoryDreaming',packageName:'dsh-memory-dreaming',schema},legacy);this.context=ctx;this.abort=new AbortController();this.configAbort=new AbortController();this.queue=Promise.resolve();this.scheduleScope=null;this.scheduleError='';this.tasks=new Set();this.vectorRuns=new Map();
+  ctx.inject(['pluginDiagnostics'],scope=>{const diag=scope.get('pluginDiagnostics');diag.start('dsh-memory-dreaming');scope.effect(()=>()=>diag.stop('dsh-memory-dreaming'));});
   this.memory=new Memory(ctx.dshHomePath('memory-dreaming','state.sqlite'),ctx,()=>this.configFile.value);
   this.embeddingBridge=installDshEmbeddingBridge(ctx,this.memory);
   this.embeddingCatalog=()=>{this.embeddingBridge.sync();return this.memory.vectorIndex.catalog(this.abort.signal);};
   ctx.effect(()=>()=>this.embeddingBridge.dispose());
-  this.workflows=new WorkflowLedger(this.memory,ctx);this.schedules=new MemorySchedules(this.memory,ctx,undefined,this.workflows);this.workflowError='';this.workflowReady=this.workflows.recover(this.abort.signal).catch(error=>{if(!this.abort.signal.aborted)this.workflowError='原生任务记录暂不可核对。';});this.tasks.add(this.workflowReady);this.workflowReady.finally(()=>this.tasks.delete(this.workflowReady)).catch(()=>{});
+  this.workflows=new WorkflowLedger(this.memory,ctx);this.schedules=new MemorySchedules(this.memory,ctx,undefined,this.workflows);this.workflowError='';this.workflowReady=this.workflows.recover(this.abort.signal).catch(error=>{if(!this.abort.signal.aborted){this.workflowError='原生任务记录暂不可核对。';ctx.get('pluginDiagnostics')?.record('dsh-memory-dreaming','error','workflow.recover-failed',{code:error?.code});}});this.tasks.add(this.workflowReady);this.workflowReady.finally(()=>this.tasks.delete(this.workflowReady)).catch(()=>{});
   for(const initialize of initializers)initialize.call(this);
   this.configFile.subscribe(()=>{this.configAbort.abort();this.configAbort=new AbortController();for(const abort of this.memory.running.values())abort.abort();this.reconcileLater();});
   ctx.inject(['schedule','sessionController'],scope=>{this.scheduleScope=scope;this.scheduleService=scope.schedule;this.reconcileLater();scope.effect(()=>()=>{if(this.scheduleScope===scope)this.scheduleScope=null;});});
