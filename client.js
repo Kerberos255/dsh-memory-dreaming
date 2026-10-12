@@ -62,6 +62,21 @@ function ModelPicker({ scope, kind='chat', provider, model, disabled, label, emp
     catalog.groups.map(group=>e('optgroup',{key:group.id,label:group.name||group.id},group.models.map(entry=>e('option',{key:entry.id,value:encode(group.id,entry.id)},entry.name||entry.id))))),
     error?e('small',{role:'status'},'模型目录暂不可用：'+error):kind==='embedding'&&!catalog.groups.length?e('small',null,'尚未注册向量模型。'):null);
 }
+function RolePicker({scope,value,disabled,label,onChange}) {
+  const e=React.createElement,[catalog,setCatalog]=React.useState({available:false,roles:[]}),[error,setError]=React.useState('');
+  React.useEffect(()=>{
+    let active=true,sequence=0;
+    const load=()=>{const current=++sequence;scope.call('roleCatalog',{}).then(result=>{if(active&&current===sequence){setCatalog(result);setError('');}}).catch(failure=>{if(active&&current===sequence)setError(failure.message);});};
+    load();window.addEventListener('focus',load);
+    return()=>{active=false;window.removeEventListener('focus',load);};
+  },[scope]);
+  const known=catalog.roles.some(role=>role.preset===value);
+  return e('div',null,e('select',{'aria-label':label,value,disabled,onChange:event=>onChange(event.target.value)},
+    e('option',{value:''},'自动关联预设与工作区（兼容原配置）'),
+    value&&!known?e('option',{value},value+'（当前角色不可用）'):null,
+    catalog.roles.map(role=>e('option',{key:role.preset,value:role.preset},role.name+' · '+(role.workspaceTitle||role.preset)))),
+    error?e('small',{role:'status'},'角色目录读取失败：'+error):!catalog.available?e('small',null,'指令文件与角色插件不可用；原路径配置仍可使用。'):null);
+}
 function FileConfigPage({ scope, title, description, fields, actionLabel, credentialApi, credentials, credentialTitle='凭证', credentialsFirst=false }) {
   const e = React.createElement, snapshot = useFileConfig(scope);
   const [editor, setEditor] = React.useState({ base: null, draft: null, error: '', saved: false });
@@ -100,11 +115,17 @@ function FileConfigPage({ scope, title, description, fields, actionLabel, creden
     const value = configValue(editor.draft,spec.key), id = 'dsh-config-' + spec.key;
     const common = { id, disabled: disabled || spec.disabled, 'aria-label': spec.label };
     let input;
-    if (spec.type === 'readonly') input = e('input', { ...common, type: 'text', readOnly: true, value: snapshot.details?.[spec.detail] ?? '', placeholder: spec.placeholder });
+    if (spec.type === 'credential') return e('div',{className:'dpc-field dpc-credential',key:spec.key},
+      e('div',{className:'dpc-label'},e('span',null,spec.label),e('small',null,'独立保存到 DSH 凭证管理，不会写入渠道配置文件。')),
+      e('div',{className:'dpc-control'},credentialApi&&credentials&&snapshot.value
+        ?e(CredentialsPage,{api:credentialApi,refs:credentials(snapshot.value),writable:snapshot.writable,title:spec.label,inline:true})
+        :e('small',null,'凭证服务暂不可用')));
+    if (spec.type === 'readonly') input = e('div', { className: 'dpc-status', id }, snapshot.details?.[spec.detail] ?? spec.placeholder ?? '—');
     else if (spec.type === 'boolean') input = e(DshSwitch, { label: spec.label, disabled: common.disabled, checked: value, onChange: next => change(spec.key, next) });
     else if (spec.type === 'multiline') input = e('textarea', {...common,rows:5,value,onChange:event=>change(spec.key,event.target.value)});
     else if (spec.type === 'list') input = e('textarea', {...common, rows: Math.max(3,Math.min(8,value.length+1)), value:editor.listText?.[spec.key]??value.join('\n'),
       onChange:event=>{const text=event.target.value;setEditor(previous=>({...previous,draft:configChange(previous.draft,spec.key,text.split(/[\n,]/).map(item=>item.trim()).filter(Boolean)),listText:{...previous.listText,[spec.key]:text},error:'',errorCode:'',saved:false}));} });
+    else if (spec.type === 'role') input = e(RolePicker,{scope,value,disabled:common.disabled,label:spec.label,onChange:next=>change(spec.key,next)});
     else if (spec.type === 'model') input = e(ModelPicker,{scope,kind:spec.kind,provider:configValue(editor.draft,spec.providerKey),model:value,emptyLabel:spec.emptyLabel,disabled:common.disabled,label:spec.label,onChange:selection=>setEditor(previous=>({...previous,draft:configChange(configChange(previous.draft,spec.providerKey,selection.provider),spec.key,selection.model),error:'',errorCode:'',saved:false}))});
     else if (spec.type === 'select') input = e('select', { ...common, value, onChange: event => change(spec.key, spec.numeric ? Number(event.target.value) : event.target.value) }, spec.options.map(([key, label]) => e('option', { key, value: key }, label)));
     else if (spec.type === 'order' || spec.type === 'providers') input = e('ol', { className: 'dpc-order' }, value.map((key, index) => e('li', { key },
@@ -136,9 +157,23 @@ function FileConfigPage({ scope, title, description, fields, actionLabel, creden
       if(!groups.length||groups.at(-1).title!==(spec.group||''))groups.push({title:spec.group||'',fields:[]});
       groups.at(-1).fields.push(spec);
     }
-    return groups.map((group,index)=>e('section',{className:'dpc-group',key:index},group.title?e('h4',null,group.title):null,group.fields.map(field)));
+    const items=specs=>{
+      const result=[];
+      for(let index=0;index<specs.length;){
+        const spec=specs[index];
+        if(!spec.fold){result.push(field(spec));index++;continue;}
+        let end=index+1;
+        while(end<specs.length&&specs[end].fold===spec.fold)end++;
+        result.push(e('details',{className:'dpc-fold',key:'fold-'+spec.key},
+          e('summary',null,spec.fold),...specs.slice(index,end).map(field)));
+        index=end;
+      }
+      return result;
+    };
+    return groups.map((group,index)=>e('section',{className:'dpc-group',key:index},group.title?e('h4',null,group.title):null,items(group.fields)));
   };
-  const credentialView=credentialApi&&credentials&&snapshot.value?e(CredentialsPage,{api:credentialApi,refs:credentials(snapshot.value),writable:snapshot.writable,title:credentialTitle,expanded:credentialsFirst}):null;
+  const embeddedCredentials=fields.some(spec=>spec.type==='credential');
+  const credentialView=!embeddedCredentials&&credentialApi&&credentials&&snapshot.value?e(CredentialsPage,{api:credentialApi,refs:credentials(snapshot.value),writable:snapshot.writable,title:credentialTitle,expanded:credentialsFirst}):null;
   const reloadNeeded = external || snapshot.requestError || editor.errorCode?.includes('conflict');
   return e('form', { className: 'dpc-page', 'aria-label': title, onSubmit: event => { event.preventDefault(); if (disabled || external || (!dirty && !snapshot.error)) return;
     void work(async () => { const result = await scope.update(editor.draft, editor.base.revision); replace(result); if (alive.current) setEditor(previous => ({ ...previous, saved: true })); });
@@ -157,7 +192,7 @@ function FileConfigPage({ scope, title, description, fields, actionLabel, creden
     credentialsFirst?null:credentialView,
   );
 }
-function CredentialsPage({ api, refs, writable, title, expanded=false }) {
+function CredentialsPage({ api, refs, writable, title, expanded=false, inline=false }) {
   const e = React.createElement;
   const [status, setStatus] = React.useState({}), [drafts, setDrafts] = React.useState({}), [busy, setBusy] = React.useState(false), [error, setError] = React.useState('');
   const alive = React.useRef(false), running = React.useRef(false);
@@ -183,9 +218,11 @@ function CredentialsPage({ api, refs, writable, title, expanded=false }) {
     } catch (reason) { if (alive.current) setError(reason.message); }
     finally { running.current = false; if (alive.current) setBusy(false); }
   };
-  return e(expanded?'section':'details', { className: 'dpc-credentials' }, e(expanded?'h4':'summary', null, title), e('fieldset', { disabled: busy || !writable },
-    e('p', null, '密钥单独保存到 DSH 凭证管理；已有密钥只显示配置状态。'),
-    Object.entries(refs).map(([ref, label]) => e('div', { className: 'dpc-field', key: ref }, e('label', null, label, ' · ', ref),
+  return e(inline?'div':expanded?'section':'details', { className: inline?'dpc-credentials-inline':'dpc-credentials' },
+    inline?null:e(expanded?'h4':'summary', null, title), e('fieldset', { disabled: busy || !writable },
+    inline?null:e('p', null, '密钥单独保存到 DSH 凭证管理；已有密钥只显示配置状态。'),
+    Object.entries(refs).map(([ref, label]) => e('div', { className: inline?'dpc-inline-secret':'dpc-field', key: ref },
+      inline?e('small',{role:'status'},status[ref]?.configured?'密钥已配置':'密钥未配置'):e('label', null, label, ' · ', ref),
       e('input', { type: 'password', autoComplete: 'new-password', 'aria-label': label + ' 密钥', value: drafts[ref] || '', placeholder: status[ref]?.configured ? '已配置；留空保持' : '未配置',
         onChange: event => setDrafts(previous => ({ ...previous, [ref]: event.target.value })) }),
       e('div', { className: 'dpc-actions' }, e(DshButton, { type: 'button', variant: 'outline', disabled: !drafts[ref], onClick: () => void save(ref, false) }, '保存密钥'),
@@ -204,9 +241,13 @@ function installConfigPage(ctx, options) {
       .dpc-page p,.dpc-page small{line-height:1.65;color:var(--dsw-alias-label-secondary)}
       .dpc-page [role=alert]{color:var(--dsw-alias-state-error-primary,#d64545)}
       .dpc-group+.dpc-group{margin-top:28px}.dpc-group h4{margin:0 0 8px;font-size:14px;font-weight:600}
+      .dpc-fold{margin:12px 0 0;padding:12px 16px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px}
+      .dpc-fold>summary{font-size:13px;font-weight:500;color:var(--dsw-alias-label-secondary)}
+      .dpc-fold[open]>summary{margin-bottom:8px}.dpc-fold .dpc-field:last-child{border-bottom:0}
       .dpc-field{display:grid;grid-template-columns:minmax(180px,1fr) minmax(160px,280px);gap:24px;padding:18px 0;border-bottom:1px solid var(--dsw-alias-border-l2);align-items:center}
       .dpc-label label{line-height:22px;font-weight:500}.dpc-label small{display:block;margin-top:4px;font-size:12px}
       .dpc-control{min-width:0}.dpc-boolean .dpc-control{justify-self:end}
+      .dpc-status{font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-tertiary);word-break:break-word;line-height:1.6}
       .dpc-field input:not([type=checkbox]),.dpc-field select,.dpc-field textarea{box-sizing:border-box;width:100%;padding:9px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-2);color:inherit;font:inherit}.dpc-field textarea{resize:vertical;line-height:1.6}
       .dpc-actions{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:24px}
       .dpc-order{margin:0;padding:0;list-style:none;display:grid;gap:4px}.dpc-order li{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;background:var(--dsw-alias-bg-layer-2)}
@@ -217,6 +258,7 @@ function installConfigPage(ctx, options) {
       .dpc-credentials:first-child{border-top:0;margin-top:0;padding-top:0;margin-bottom:28px}.dpc-credentials h4{margin:0;font-size:14px;font-weight:600}
       .dpc-advanced{margin-top:28px;padding:18px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px}.dpc-advanced>summary{font-weight:500}.dpc-advanced[open]>summary{margin-bottom:20px}
       .dpc-credentials .dpc-field{grid-template-columns:140px minmax(0,1fr) auto;gap:14px}.dpc-credentials .dpc-actions{margin:0}
+      .dpc-credentials-inline fieldset{border:0;padding:0;margin:0;min-width:0}.dpc-inline-secret{display:grid;gap:8px}.dpc-inline-secret .dpc-actions{display:flex;flex-wrap:wrap;gap:8px;margin:0}.dpc-inline-secret .dpc-actions button{font-size:12px}
       .dpc-page :is(select,input,textarea):focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#4d6bfe);outline-offset:3px}
       [data-plugin-detail="${options.packageName}"] [data-plugin-rows]:has(>ul>[data-plugin-row]:only-child):not(:has([data-state=failed],[data-state=off])){display:none}
       @media(max-width:620px){.dpc-field,.dpc-credentials .dpc-field{grid-template-columns:1fr;gap:10px}.dpc-boolean{grid-template-columns:1fr auto;gap:20px}}
@@ -277,5 +319,5 @@ function PluginPanel({scope}) {
  );
 }
 
-return { inject: ['slots', 'connection'], apply(ctx) { installConfigPage(ctx, { ...{"rowId":"memory-dreaming","endpoint":"memoryDreaming","standalone":true,"title":"Dream 与长期记忆","description":"从原生会话整理日常记忆、Dream 与每周复查，保留出处并审阅长期事实。","fields":[{"key":"workspace","label":"工作区","type":"text","help":"留空时使用客户端默认工作区。"},{"key":"recall","label":"启用长期记忆检索","type":"boolean"},{"key":"autoRecall","label":"按当前问题自动召回可信事实","group":"跨会话召回","type":"boolean","help":"主人由 Channel Core 认领并核验；两渠道共用会话仍需在 Channel Core 关联身份。其他人的私聊与群聊不会召回个人记忆。"},{"key":"autoRecallMaxItems","label":"每次自动召回最多几条","group":"跨会话召回","type":"number","min":1,"max":5,"when":{"autoRecall":true},"help":"默认最多 3 条。召回只在有明显关键词命中时触发。"},{"key":"autoRecallMaxChars","label":"召回总文本预算（字符）","group":"跨会话召回","type":"number","min":200,"max":4000,"when":{"autoRecall":true},"help":"默认 1200 字符。已确认记忆在 MEMORY.md 持久化；这里只附加相关事实，不追加全量历史。"},{"key":"autoPromote","label":"自动晋升高质量候选","type":"boolean","help":"默认关闭。开启后，只晋升出处仍有效、达到可信度和独立观察次数且无冲突的事实。"},{"key":"minConfidence","label":"自动晋升最低可信度","type":"number","min":0.5,"max":1,"step":"any"},{"key":"minObservations","label":"自动晋升最低独立观察次数","type":"number","min":1,"max":20,"help":"同一条消息重复整理不会增加观察次数。","step":1},{"key":"candidateDays","label":"Dream 回顾天数","help":"Dream 从本工作区最近若干天的会话提炼记忆；每日定时整理前一天；周一归纳并安全归档上周一至周日的日记。","type":"number","min":7,"max":3650,"step":1},{"key":"memoryReviewDays","label":"已发布事实复核周期（天）","group":"记忆新鲜度","type":"number","min":30,"max":3650,"help":"默认 180 天。到期的长期事实保留在 MEMORY.md，但暂停自动召回，等待你确认它依然有效；手动检索仍可看到并标记待复核。"},{"key":"incremental","label":"仅整理尚未处理的新消息","group":"增量 Dream","type":"boolean","help":"按每个任务种类记录成功处理的 Session 消息序号。失败或中断不会标记已处理；关闭后允许重新整理完整时间窗。"},{"key":"automatic","label":"自动日常记忆、Dream 与每周复查","type":"boolean","help":"使用官方自动任务；开启后会按时调用模型，并在原生会话保留执行过程。"},{"key":"timeZone","label":"任务时区","type":"text","help":"例如 Asia/Shanghai。"},{"key":"dailyTime","label":"每日记忆时间","type":"text","help":"HH:mm:ss"},{"key":"dreamTime","label":"Dream 整理时间","type":"text","help":"HH:mm:ss"},{"key":"weeklyTime","label":"每周复查时间","type":"text","help":"HH:mm:ss"},{"key":"weeklyDay","label":"每周归档日期（建议周一）","type":"select","numeric":true,"options":[[1,"星期一"],[2,"星期二"],[3,"星期三"],[4,"星期四"],[5,"星期五"],[6,"星期六"],[7,"星期日"]]},{"key":"model","providerKey":"modelProvider","label":"整理模型","type":"model"},{"key":"maxOutputTokens","label":"单次整理初始输出 token","type":"number","min":256,"max":16384,"help":"完整 JSON 生成后自行结束；单条来源截断才按需加大，最多 16384 tokens（仍受模型及上下文限制）。","step":1},{"key":"maxInputTokens","label":"单次整理输入 token 上限","type":"number","min":1000,"max":65536,"help":"同时受实际模型窗口限制。","step":1},{"key":"maxSessions","label":"每批最多处理会话数","help":"整轮会遍历工作区所有符合条件的 Session；此值只限制单次模型调用包含多少个 Session，不再截断整轮来源。","type":"number","min":1,"max":100,"step":1},{"key":"maxCandidates","label":"每工作区最多有效候选数","type":"number","min":10,"max":5000,"step":1},{"key":"embeddingModel","providerKey":"embeddingProvider","kind":"embedding","label":"Embedding 模型","type":"model","help":"从已注册的向量模型选择；提供方不可用时回退到词语检索。"},{"key":"vectorStore","label":"向量存储 ID","type":"text","help":"默认 sqlite；可由其他插件提供替代存储。"}],"packageName":"dsh-memory-dreaming"}, panel: PluginPanel,  }); } };
+return { inject: ['slots', 'connection'], apply(ctx) { installConfigPage(ctx, { ...{"rowId":"memory-dreaming","endpoint":"memoryDreaming","standalone":true,"title":"Dream 与长期记忆","description":"从原生会话整理日常记忆、Dream 与每周复查，保留出处并审阅长期事实。","fields":[{"key":"workspace","label":"工作区","type":"text","help":"留空时使用客户端默认工作区。"},{"key":"recall","label":"启用长期记忆检索","type":"boolean"},{"key":"autoRecall","label":"按当前问题自动召回可信事实","group":"跨会话召回","type":"boolean","help":"主人由 Channel Core 认领并核验；两渠道共用会话仍需在 Channel Core 关联身份。其他人的私聊与群聊不会召回个人记忆。"},{"key":"autoRecallMaxItems","label":"每次自动召回最多几条","group":"跨会话召回","type":"number","min":1,"max":5,"when":{"autoRecall":true},"help":"默认最多 3 条。召回只在有明显关键词命中时触发。"},{"key":"autoRecallMaxChars","label":"召回总文本预算（字符）","group":"跨会话召回","type":"number","min":200,"max":4000,"when":{"autoRecall":true},"help":"默认 1200 字符。已确认记忆在 MEMORY.md 持久化；这里只附加相关事实，不追加全量历史。"},{"key":"autoPromote","label":"自动晋升高质量候选","type":"boolean","help":"默认关闭。开启后，只晋升出处仍有效、达到可信度和独立观察次数且无冲突的事实。"},{"key":"minConfidence","label":"自动晋升最低可信度","type":"number","min":0.5,"max":1,"step":"any"},{"key":"minObservations","label":"自动晋升最低独立观察次数","type":"number","min":1,"max":20,"help":"同一条消息重复整理不会增加观察次数。","step":1},{"key":"candidateDays","label":"Dream 回顾天数","help":"Dream 从本工作区最近若干天的会话提炼记忆；每日定时整理前一天；周一归纳并安全归档上周一至周日的日记。","type":"number","min":7,"max":3650,"step":1},{"key":"memoryReviewDays","label":"已发布事实复核周期（天）","group":"记忆新鲜度","type":"number","min":30,"max":3650,"help":"默认 180 天。到期的长期事实保留在 MEMORY.md，但暂停自动召回，等待你确认它依然有效；手动检索仍可看到并标记待复核。"},{"key":"incremental","label":"仅整理尚未处理的新消息","group":"增量 Dream","type":"boolean","help":"按每个任务种类记录成功处理的 Session 消息序号。失败或中断不会标记已处理；关闭后允许重新整理完整时间窗。"},{"key":"automatic","label":"自动日常记忆、Dream 与每周复查","type":"boolean","help":"使用官方自动任务；开启后会按时调用模型，并在原生会话保留执行过程。"},{"key":"timeZone","label":"任务时区","type":"text","help":"例如 Asia/Shanghai。"},{"key":"dailyTime","label":"每日记忆时间","type":"text","help":"HH:mm:ss"},{"key":"dreamTime","label":"Dream 整理时间","type":"text","help":"HH:mm:ss"},{"key":"weeklyTime","label":"每周复查时间","type":"text","help":"HH:mm:ss"},{"key":"weeklyDay","label":"每周归档日期（建议周一）","type":"select","numeric":true,"options":[[1,"星期一"],[2,"星期二"],[3,"星期三"],[4,"星期四"],[5,"星期五"],[6,"星期六"],[7,"星期日"]]},{"key":"model","providerKey":"modelProvider","label":"整理模型","type":"model"},{"key":"maxOutputTokens","label":"单次整理初始输出 token","type":"number","help":"生成完整 JSON 后会自行停止；单条来源截断才按需增加，最多 16384 tokens（还受模型和上下文限制）。","min":256,"max":16384,"step":1},{"key":"maxInputTokens","label":"单次整理输入 token 上限","type":"number","min":1000,"max":65536,"help":"同时受实际模型窗口限制。","step":1},{"key":"maxSessions","label":"每批最多处理会话数","help":"整轮会遍历工作区所有符合条件的 Session；此值只限制单次模型调用包含多少个 Session，不再截断整轮来源。","type":"number","min":1,"max":100,"step":1},{"key":"maxCandidates","label":"每工作区最多有效候选数","type":"number","min":10,"max":5000,"step":1},{"key":"embeddingModel","providerKey":"embeddingProvider","kind":"embedding","label":"Embedding 模型","type":"model","help":"从已注册的向量模型选择；提供方不可用时回退到词语检索。"},{"key":"vectorStore","label":"向量存储 ID","type":"text","help":"默认 sqlite；可由其他插件提供替代存储。"}],"packageName":"dsh-memory-dreaming"}, panel: PluginPanel,  }); } };
 } });
