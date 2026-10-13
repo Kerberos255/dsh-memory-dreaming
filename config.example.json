@@ -19,14 +19,18 @@
   "memoryReviewDays": 180,
   "autoPromote": false,
   "incremental": true,
+  "historyAutoArchive": true,
+  "historyKeepDaily": true,
+  "historyArchiveDays": 365,
   "ownerIdentityId": "owner",
   "recall": true,
   "autoRecall": true,
+  "autoRecallMode": "fallback",
   "autoRecallMaxItems": 3,
   "autoRecallMaxChars": 1200,
   "automatic": false,
-  "dailyTime": "23:50:00",
+  "dailyTime": "00:15:00",
   "dreamTime": "04:00:00",
   "weeklyTime": "04:30:00",
-  "weeklyDay": 7
+  "weeklyDay": 1
 }

@@ -12,3 +12,8 @@ Historical updates previously mixed into README are collected here. Current beha
 - **Cross-session recall:** retrieves only verified published facts scoped to the current workspace and authorized owner.
 
 See Git history for release-specific commits; passing host-free tests is not proof of live-model quality or external channel delivery.
+
+## 0.2.27 (2026-10-13)
+
+- Add automatic semantic memory recall with lexical fallback and explicit-only historical full-text search.
+- Preserve rolling daily/weekly archives in source-independent historical directories.

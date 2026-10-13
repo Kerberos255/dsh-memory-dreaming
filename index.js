@@ -2,6 +2,8 @@ import { Remote, RemoteError } from '@deepseek-ai/dsh-typert-protocol';
 import { PluginConfig } from './plugin-settings/remote-config.js';
 import { schema } from './config.js';
 import { Memory } from './memory.js';
+import { HistoryIndex } from './history-index.js';
+import { HistoryArchive } from './history-archive.js';
 import { workspace,scopeId } from './workspace-io.js';
 import { WorkflowLedger } from './workflows.js';
 import { MemorySchedules } from './schedules.js';
@@ -17,6 +19,9 @@ export default class MemoryDreaming extends PluginConfig {
   super(ctx,{service:'memoryDreaming',packageName:'dsh-memory-dreaming',schema},legacy);this.context=ctx;this.abort=new AbortController();this.configAbort=new AbortController();this.queue=Promise.resolve();this.scheduleScope=null;this.scheduleError='';this.tasks=new Set();this.vectorRuns=new Map();
   ctx.inject(['pluginDiagnostics'],scope=>{const diag=scope.get('pluginDiagnostics');diag.start('dsh-memory-dreaming');scope.effect(()=>()=>diag.stop('dsh-memory-dreaming'));});
   this.memory=new Memory(ctx.dshHomePath('memory-dreaming','state.sqlite'),ctx,()=>this.configFile.value);
+  this.history=new HistoryIndex(ctx.dshHomePath('memory-dreaming','history-index.sqlite'));
+  this.historyArchive=new HistoryArchive();
+  this.memory.weeklyArchives.preserveDaily=(cwd,entry,body)=>{if(this.configFile.value.historyKeepDaily)this.historyArchive.preserveDaily(cwd,entry.day,body,entry.hash);};
   this.embeddingBridge=installDshEmbeddingBridge(ctx,this.memory);
   this.embeddingCatalog=()=>{this.embeddingBridge.sync();return this.memory.vectorIndex.catalog(this.abort.signal);};
   ctx.effect(()=>()=>this.embeddingBridge.dispose());
@@ -36,7 +41,7 @@ export default class MemoryDreaming extends PluginConfig {
   ctx.on('agent/inbox/claimed',({agent,message,turn})=>{const preset=ctx.get('sessionProjections')?.stateOf(agent.session,'agentPreset')??agent.session.header.agentPreset;this.workflows.claim(this.workflows.identity(agent.session.header,preset),message,turn);},{global:true});
   ctx.on('user-questions/request',(request,next)=>this.waiting(request,next,'awaiting-user'),{global:true,prepend:true});
   ctx.on('approval/request',(request,next)=>this.waiting(request,next,'awaiting-approval'),{global:true,prepend:true});
-  ctx.effect(()=>async()=>{this.abort.abort();this.workflows.close();for(const abort of this.memory.running.values())abort.abort();await Promise.allSettled([...this.tasks,this.queue]);const schedule=this.scheduleService;if(schedule&&!schedule.stopping)try{await this.schedules.stop(schedule);}catch(error){console.warn('[dsh-memory-dreaming] 自动任务收尾失败：',error.message);}await this.memory.close();});
+  ctx.effect(()=>async()=>{this.abort.abort();this.workflows.close();for(const abort of this.memory.running.values())abort.abort();await Promise.allSettled([...this.tasks,this.queue]);const schedule=this.scheduleService;if(schedule&&!schedule.stopping)try{await this.schedules.stop(schedule);}catch(error){console.warn('[dsh-memory-dreaming] 自动任务收尾失败：',error.message);}await this.memory.close();this.history.close();});
   ctx.inject(['tools'],scope=>{
    // Scheduled maintenance Sessions may only invoke the typed memory_dream tool.
    // Denial is monotonic; it never auto-approves shell access or other permissions.
@@ -45,8 +50,14 @@ export default class MemoryDreaming extends PluginConfig {
     const maintenance=exec.agent.session.id===this.sessionId(cwd),kind=args.kind??'dream';
     const scheduled=maintenance?this.workflows.current(exec.agent.session.id,kind).filter(row=>row.origin!=='manual'):[];
     if(maintenance&&!this.configFile.value.automatic&&scheduled.length){for(const row of scheduled)this.workflows.set(row.id,'cancelled','自动归档已关闭，本次记忆作业未执行。');if(!this.workflows.current(exec.agent.session.id,kind).some(row=>row.origin==='manual'))return{state:'cancelled',artifacts:[],message:'自动归档已关闭。'};}
-    return maintenance?this.workflows.run(cwd,kind,exec,{signal:exec.signal,agent:exec.agent,day:args.day}):this.memory.run(cwd,kind,{signal:exec.signal,agent:exec.agent,day:args.day,sourceSessionId:exec.agent.session.id,draftOnly:true});
-   }],['memory_search','检索当前工作区已确认的长期记忆；向量提供方失效时使用词语检索。',{query:{type:'string'},limit:{type:'integer',minimum:1,maximum:20}},(args,exec,cwd)=>this.memory.search(cwd,args.query,args.limit??8,exec.signal)],['memory_topics','只读查看已确认记忆的主题索引；再使用 memory_search 深入查找对应事实。',{},(_args,_exec,cwd)=>this.memory.topicIndex(cwd)]];
+    if(!maintenance)return this.memory.run(cwd,kind,{signal:exec.signal,agent:exec.agent,day:args.day,sourceSessionId:exec.agent.session.id,draftOnly:true});
+    const result=await this.workflows.run(cwd,kind,exec,{signal:exec.signal,agent:exec.agent,day:args.day});
+    if(kind==='weekly'&&result?.state==='completed'&&this.configFile.value.historyAutoArchive){
+      try{this.historyArchive.snapshot(cwd,{days:this.configFile.value.historyArchiveDays});}
+      catch(error){this.context.get('pluginDiagnostics')?.record('dsh-memory-dreaming','warn','history-archive-unavailable',{code:error?.code??'unavailable'});}
+    }
+    return result;
+   }],['memory_search','检索已发布长期事实，以及当前日记、周记和永久历史归档；历史记录带来源与未审核标记。向量失效回退词语检索。',{query:{type:'string'},limit:{type:'integer',minimum:1,maximum:20}},(args,exec,cwd)=>this.searchUnified(cwd,args.query,args.limit??5,exec.signal)],['memory_topics','只读查看已确认记忆的主题索引；再使用 memory_search 深入查找对应事实。',{},(_args,_exec,cwd)=>this.memory.topicIndex(cwd)]];
    for(const [name,description,properties,execute]of tools)scope.tools.register({name,description,parameters:{type:'object',properties,additionalProperties:false},output:{schema:{type:'object',additionalProperties:true},render:(_args,value)=>[{type:'text',text:JSON.stringify(value)}]},execute:async(args,exec)=>{
     exec.signal.throwIfAborted();if(!this.configFile.value.enabled||!exec.agent)throw new Error('记忆插件已停用');const cwd=exec.agent.session.header.cwd,preset=ctx.get('sessionProjections')?.stateOf(exec.agent.session,'agentPreset');
     if(!cwd||typeof preset!=='string')throw new Error('当前会话缺少有效工作区或 Agent 预设');
@@ -59,7 +70,7 @@ export default class MemoryDreaming extends PluginConfig {
  async operation(fn){if(this.abort.signal.aborted||!this.configFile.value.enabled)throw new RemoteError('memory/unavailable','记忆插件已停用',{});const revision=this.configFile.snapshot().revision,signal=AbortSignal.any([this.abort.signal,this.configAbort.signal]);
   const task=(async()=>{try{const cwd=await workspace(this.context,this.configFile.value,signal);if(revision!==this.configFile.snapshot().revision)throw new Error('设置已更新，请重新操作');signal.throwIfAborted();return JSON.parse(JSON.stringify(await fn(cwd,signal)));}catch(error){if(error instanceof RemoteError)throw error;throw new RemoteError('memory/operation-failed',error.message,{});}})();this.tasks.add(task);try{return await task;}finally{this.tasks.delete(task);}
  }
- status(){return this.operation(async cwd=>({...this.memory.status(cwd),vectorBusy:!!this.vectorRuns.get(this.memory.scope(cwd))?.busy,vectorResult:this.vectorRuns.get(this.memory.scope(cwd))?.result??null,manualResult:this.workflows.manualStatus(cwd),scheduleError:this.scheduleError,workflowError:this.workflowError,schedules:await this.scheduleRows(cwd),templates:this.schedules.rows(cwd),workflows:this.workflows.rows(cwd)}));}
+ status(){return this.operation(async cwd=>({...this.memory.status(cwd),historyIndex:this.history.status(cwd),historyArchive:this.historyArchive.plan(cwd,{days:this.configFile.value.historyArchiveDays}),vectorBusy:!!this.vectorRuns.get(this.memory.scope(cwd))?.busy,vectorResult:this.vectorRuns.get(this.memory.scope(cwd))?.result??null,manualResult:this.workflows.manualStatus(cwd),scheduleError:this.scheduleError,workflowError:this.workflowError,schedules:await this.scheduleRows(cwd),templates:this.schedules.rows(cwd),workflows:this.workflows.rows(cwd)}));}
  health({cwd,agentPreset,sessionId}={}){
   if(this.abort.signal.aborted)throw new Error('记忆插件已卸载');const config=this.configFile.value;
   // The Agent preset is an internal maintenance choice, not a source filter.
@@ -89,7 +100,31 @@ export default class MemoryDreaming extends PluginConfig {
  retryVectorCleanup(){return this.operation(cwd=>this.memory.retryVectorPurges(cwd));}
  recheckWorkflows(){return this.operation(async(cwd,signal)=>{await this.workflows.recover(signal);this.workflowError='';this.reconcileLater();await this.queue;return{workflows:this.workflows.rows(cwd),templates:this.schedules.rows(cwd)};});}
  excludeSession(sessionId){return this.operation(cwd=>this.memory.forgetSession(cwd,sessionId));}
- search(query,limit){return this.operation((cwd,signal)=>this.memory.search(cwd,query,limit??8,signal));}
+ async searchUnified(cwd,query,limit=5,signal){
+  const size=Number.isSafeInteger(limit)?Math.max(1,Math.min(20,limit)):5;
+  const trusted=await this.memory.search(cwd,query,size,signal);
+  let imported=[];
+  try{
+   imported=await this.history.search(cwd,query,{limit:size,maxChars:2000,incremental:true,semantic:true,vectorIndex:this.memory.vectorIndex,config:this.configFile.value,signal});
+  }catch(error){
+   signal?.throwIfAborted();
+   // Historical data is optional; never disable verified long-term memory.
+   this.context.get('pluginDiagnostics')?.record('dsh-memory-dreaming','warn','history-search-unavailable',{code:error?.code??'unavailable'});
+  }
+  const all=[...trusted.matches.map(row=>({...row,kind:'verified'})),...imported.map(row=>({...row,kind:'historical'}))]
+    .sort((a,b)=>((b.score??0)+(b.kind==='verified'?.1:0))-((a.score??0)+(a.kind==='verified'?.1:0)));
+  let used=0;const matches=[];
+  for(const item of all){
+   if(matches.length>=size)break;
+   const cost=item.text.length+80;
+   if(used+cost>2000)continue;
+   used+=cost;matches.push(item);
+  }
+  return {mode:imported.length?'combined':trusted.mode,matches,historyIndexed:this.history.status(cwd).indexed};
+ }
+ search(query,limit){return this.operation((cwd,signal)=>this.searchUnified(cwd,query,limit??5,signal));}
+ rebuildHistory(){return this.operation(cwd=>this.history.sync(cwd,{incremental:true}));}
+ archiveHistory(){return this.operation(cwd=>{const result=this.historyArchive.snapshot(cwd,{days:this.configFile.value.historyArchiveDays});this.history.sync(cwd,{incremental:true});return result;});}
  cancel(){return this.operation(cwd=>{this.vectorRuns.get(this.memory.scope(cwd))?.abort?.abort();return this.memory.cancel(cwd);});}
  registerVectorProvider(name,provider){return this.memory.registerVectorProvider(name,provider);}
  registerEmbeddingProvider(name,provider){return this.memory.registerEmbeddingProvider(name,provider);}
@@ -116,4 +151,4 @@ export default class MemoryDreaming extends PluginConfig {
   try{this.workflows.event(identity,event);}catch(error){this.workflowError='自动任务事件需要核对。';console.warn('[dsh-memory-dreaming] schedule ledger:',event.type,'seq',event.seq,error.message);const task=this.workflows.recover(this.abort.signal).catch(()=>{});this.tasks.add(task);task.finally(()=>this.tasks.delete(task)).catch(()=>{});}
  }
 }
-const initializers=[];for(const name of ['status','runMemory','startMemory','promote','reaffirm','forget','inspectCommit','recheckCommits','discardCommit','retryVectorCleanup','recheckWorkflows','excludeSession','search','cancel','rebuildVectors','startRebuildVectors'])Remote(MemoryDreaming.prototype[name],{kind:'method',name,static:false,private:false,addInitializer:fn=>initializers.push(fn)});
+const initializers=[];for(const name of ['status','runMemory','startMemory','promote','reaffirm','forget','inspectCommit','recheckCommits','discardCommit','retryVectorCleanup','recheckWorkflows','excludeSession','search','rebuildHistory','archiveHistory','cancel','rebuildVectors','startRebuildVectors'])Remote(MemoryDreaming.prototype[name],{kind:'method',name,static:false,private:false,addInitializer:fn=>initializers.push(fn)});

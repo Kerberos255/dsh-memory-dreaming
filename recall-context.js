@@ -124,6 +124,68 @@ export function recallForSession(memory,ctx,session,config){
   return selectTrustedRecall(query,candidates,{maxItems:config.autoRecallMaxItems,maxChars:config.autoRecallMaxChars});
 }
 
+/** Semantic fallback runs only after the same permission/source checks as lexical recall.
+ * The result is revalidated after await, in case ownership/forgetting changed
+ * while a provider request was in flight.
+ */
+export async function recallForSessionHybrid(memory,ctx,session,config,signal){
+ const lexical=recallForSession(memory,ctx,session,config);
+ const mode=config.autoRecallMode??'fallback';
+ if(mode==='keyword'||!authorizedRecallScope(session,ctx,config))return lexical;
+ const query=latestUserQuery(session);
+ if(!query||query.length>1000)return lexical;
+ const maxItems=config.autoRecallMaxItems??3,maxChars=config.autoRecallMaxChars??1200;
+ // An exact, convincing lexical hit requires no additional DB scan or API call.
+ if(mode==='fallback'&&lexical.length>0&&lexical[0].score>=6)return lexical;
+ if(!config.embeddingProvider||!config.embeddingModel)return lexical;
+ const cwd=fs.realpathSync(session.header.cwd);
+ const candidates=memory.recalledCandidates(cwd).filter(fact=>!fact.reviewDue);
+ if(!candidates.length)return [];
+ let semantic=[];
+ try{
+  const {bounded}=await import('./vector.js');
+  semantic=await bounded(current=>memory.vectorIndex.search(memory.scope(cwd),query,candidates,config,Math.min(20,Math.max(6,maxItems*3)),current),signal,1500);
+ }catch(error){
+  signal?.throwIfAborted();
+  return lexical;
+ }
+ signal?.throwIfAborted();
+ // Async boundary: check channel owner, workspace, published blocks and
+ // forgotten sources again before emitting even a single fact.
+ if(!authorizedRecallScope(session,ctx,config))return [];
+ const fresh=new Map(memory.recalledCandidates(cwd).filter(fact=>!fact.reviewDue).map(fact=>[fact.id,fact]));
+ const verified=candidates.filter(fact=>fresh.has(fact.id)&&fresh.get(fact.id).text===fact.text).map(fact=>fresh.get(fact.id));
+ const allowed=new Set(verified.map(fact=>fact.id));
+ const accepted=(Array.isArray(semantic)?semantic:[]).filter(hit=>allowed.has(hit.id)&&Number.isFinite(hit.score)&&hit.score>=0.62);
+ const ranked=rankMemoryMatches(query,verified,accepted,Math.min(20,verified.length))
+  .filter(row=>row.keyword>=2||row.vector>=0.62);
+ let used=0,output=[];
+ for(const {item,score}of ranked){
+  if(output.length>=maxItems)break;
+  const text=String(item.text??'').trim(),cost=text.length+90;
+  if(!text||text.length>2000||used+cost>maxChars)continue;
+  output.push({id:item.id,text,source:(item.sources??[]).slice(0,1).map(s=>({sessionId:s.sessionId,seq:s.seq})),score:Math.round(score*1000)/1000});
+  used+=cost;
+ }
+ return output;
+}
+
+/** Cache only fact IDs and texts. Re-read the published source of truth on every
+ * model step so a forget, owner change or revision cannot leak stale memories.
+ */
+export function freshCachedRecall(memory,ctx,session,config,rows){
+ if(!authorizedRecallScope(session,ctx,config))return null;
+ const cwd=fs.realpathSync(session.header.cwd);
+ const current=new Map(memory.recalledCandidates(cwd).filter(item=>!item.reviewDue).map(item=>[item.id,item]));
+ const validated=[];
+ for(const item of rows){
+  const fact=current.get(item.id);
+  if(!fact||fact.text!==item.text)return null;
+  validated.push({...item,text:fact.text,source:(fact.sources??[]).slice(0,1).map(s=>({sessionId:s.sessionId,seq:s.seq}))});
+ }
+ return validated;
+}
+
 /** Agent-scoped hook: the model sees only source-backed data, never raw transcripts. */
 export function attachAutoRecall(agent,owner,ctx){
  agent.ctx.inject(['systemPrompt'],scope=>{
@@ -136,10 +198,14 @@ export function attachAutoRecall(agent,owner,ctx){
    let value='';
    try{
     const config=owner.configFile.value,query=latestUserQuery(agent.session),now=Date.now();
-    if(previous?.query===query&&previous?.revision===owner.configFile.revision&&now-previous.at<15000)value=previous.value;
+    const revision=owner.configFile.revision;
+    if(!authorizedRecallScope(agent.session,ctx,config)){previous=null;}
     else{
-     value=renderTrustedRecall(recallForSession(owner.memory,ctx,agent.session,config));
-     previous={query,revision:owner.configFile.revision,at:now,value};
+     const cached=previous?.query===query&&previous?.revision===revision&&now-previous.at<15000
+      ?freshCachedRecall(owner.memory,ctx,agent.session,config,previous.rows):null;
+     const rows=cached??await recallForSessionHybrid(owner.memory,ctx,agent.session,config,context.signal);
+     if(owner.configFile.revision!==revision||!authorizedRecallScope(agent.session,ctx,owner.configFile.value))previous=null;
+     else{previous={query,revision,at:now,rows};value=renderTrustedRecall(rows);}
     }
    }catch(error){console.warn('[dsh-memory-dreaming] trusted recall skipped:',error.code??'unavailable');}
    context.signal?.throwIfAborted();

@@ -115,6 +115,19 @@ export class WeeklyArchives {
     if(body!==null&&fileHash(body)!==entry.hash){intact=false;break;}
    }
    if(!intact){this.db.prepare("UPDATE memory_weekly_archives SET note='归档备份有人工修改，未清理' WHERE scope=? AND week_start=?").run(scope,row.week_start);continue;}
+   // Preserve journaled daily memories in the permanent history before the
+   // ordinary 14-day temporary-backup purge. A failed copy blocks the purge.
+   if(this.preserveDaily) {
+    try {
+     for(const entry of entries){
+      const body=readBounded(safePath(cwd,entry.backup),1048576);
+      if(body!==null)this.preserveDaily(cwd,entry,body);
+     }
+    }catch{
+     this.db.prepare("UPDATE memory_weekly_archives SET note='永久历史日记归档尚未核验，临时备份已保留' WHERE scope=? AND week_start=?").run(scope,row.week_start);
+     continue;
+    }
+   }
    for(const entry of entries){
     const filename=safePath(cwd,entry.backup),body=readBounded(filename,1048576);
     if(body!==null)fs.unlinkSync(filename);
