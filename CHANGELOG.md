@@ -17,3 +17,7 @@ See Git history for release-specific commits; passing host-free tests is not pro
 
 - Add automatic semantic memory recall with lexical fallback and explicit-only historical full-text search.
 - Preserve rolling daily/weekly archives in source-independent historical directories.
+
+## Unreleased · project/task memory and editable prompts
+
+- Add source-backed natural-language task/project identity, dated state transitions, cautious status retrieval, independent daily/Dream/weekly prompts, and editable defaults.

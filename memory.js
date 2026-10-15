@@ -11,6 +11,7 @@ import { initLifecycle,publishVersion,forgetVersion,versionOf,reviewStatus,memor
 import { channelSessionIds,publicMemorySourceAllowed,ownerChannelAuthorized } from './source-boundary.js';
 import { WeeklyArchives } from './weekly-archive.js';
 import { runWeeklyArchive } from './weekly-run.js';
+import { TaskLedger } from './task-ledger.js';
 
 const normalize=value=>value.normalize('NFKC').toLocaleLowerCase('en-US').replace(/[\s\p{P}\p{S}]+/gu,'');
 export function redact(text){return String(text).replace(/\b(?:sk-[a-zA-Z0-9_-]{16,}|[MN][A-Za-z0-9_-]{22,}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{20,})\b/g,'[凭证已隐藏]').replace(/((?:api[_ -]?key|secret|password|access[_ -]?token|bot[_ -]?token|密码|密钥)\s*[:=]\s*["']?)[^\s"',;]{6,}/gi,'$1[凭证已隐藏]');}
@@ -48,6 +49,7 @@ export class Memory {
     PRIMARY KEY(scope,kind,session,seq)
   );`);
   initLifecycle(this.db);
+  this.taskLedger=new TaskLedger(this.db);
   this.sourceQuery=this.db.prepare('SELECT payload FROM sources WHERE candidate=? ORDER BY identity');
   if(!this.db.prepare('PRAGMA table_info(artifacts)').all().some(row=>row.name==='run'))this.db.exec('ALTER TABLE artifacts ADD COLUMN run TEXT');
   this.runLeases=new MemoryRunLeases(filename,this.db);this.runLeases.recover();
@@ -146,11 +148,21 @@ export class Memory {
       const date=localDay(event.time,timeZone),matches=weekStart?date>=weekStart&&date<=day:date===day;
       if(!matches&&diagnostics)diagnostics.dateExcluded++;
       return matches;});
-    for(const event of eligible){const text=redact(textOf(event)).slice(0,6000);if(text.trim()){sources.push({sessionId:header.id,seq:event.seq,time:event.time,text});seenSessions.add(header.id);}else if(diagnostics)diagnostics.noText++;}
+    for(const event of eligible){const text=redact(textOf(event)).slice(0,6000);if(text.trim()){sources.push({sessionId:header.id,seq:event.seq,time:event.time,text,channel:!publicMemorySourceAllowed(header.id,channelIds,header)});seenSessions.add(header.id);}else if(diagnostics)diagnostics.noText++;}
    }finally{observation[Symbol.dispose]?.();}
   }return sources;
  }
- async completion(cwd,kind,sources,signal,agent){return completeWorkspaceMemory({ctx:this.ctx,config:this.getConfig(),cwd,kind,sources,signal,agent,redact});}
+ taskCandidates(cwd){
+  if(!this.getConfig().taskTracking)return [];
+  const scope=this.scope(cwd),channels=channelSessionIds(this.ctx),config=this.getConfig();
+  const forgotten=new Set(this.db.prepare('SELECT session FROM forgotten WHERE scope=?').all(scope).map(x=>x.session));
+  return this.taskLedger.suggest(scope,80).filter(task=>{
+   const sessions=this.db.prepare('SELECT DISTINCT session,owner_required FROM memory_task_events WHERE scope=? AND task=?').all(scope,task.id);
+   return sessions.length>0&&sessions.every(row=>!forgotten.has(row.session)&&
+    (!row.owner_required&&!channels.has(row.session)||ownerChannelAuthorized(this.ctx,row.session,config)));
+  }).slice(0,24);
+ }
+ async completion(cwd,kind,sources,signal,agent){return completeWorkspaceMemory({ctx:this.ctx,config:this.getConfig(),cwd,kind,sources,signal,agent,redact,knownTasks:this.taskCandidates(cwd)});}
  artifact(cwd,relative,blockId,body,maxBytes=1048576,runId=null){
   if(!body?.trim())return null;const parts=relative.split('/');if(parts.length>1)ownedDirectory(cwd,parts.slice(0,-1).join('/'));const filename=safePath(cwd,relative),before=readBounded(filename,maxBytes),after=replaceBlock(before??'',blockId,body);
   return this.commits.write({cwd,relative,preset:this.getConfig().agentPreset,scope:this.scope(cwd),before,after,maxBytes,meta:{kind:'report',runId,targets:[]}});
@@ -193,8 +205,16 @@ export class Memory {
    if(!draftOnly&&kind==='daily'&&generated.daily?.trim()){const artifact=this.artifact(cwd,'memory/'+day+'.md','daily-'+day,'## '+day+'\n\n'+redact(generated.daily),1048576,id);if(artifact)artifacts.push(artifact);}
    if(!draftOnly&&kind==='weekly'){const artifact=this.artifact(cwd,'memory/reviews/'+day+'.md','weekly-'+day,redact(generated.weekly??''),1048576,id);if(artifact)artifacts.push(artifact);}
    if(!draftOnly&&kind==='dream'){const artifact=this.artifact(cwd,'DREAMS.md','dream-'+day,generated.dream?.trim()?'## '+day+' · 梦境整理\n\n'+redact(generated.dream):'',1048576,id);if(artifact)artifacts.push(artifact);}
+   let taskResults={accepted:0,skipped:0,linked:0};
+   if(!draftOnly&&this.getConfig().taskTracking&&kind!=='weekly'){
+    const channels=channelSessionIds(this.ctx),config=this.getConfig();
+    const forgotten=new Set(this.db.prepare('SELECT session FROM forgotten WHERE scope=?').all(scope).map(row=>row.session));
+    const permitted=generated.sources.filter(src=>!forgotten.has(src.sessionId)&&
+      (!src.channel&&!channels.has(src.sessionId)||ownerChannelAuthorized(this.ctx,src.sessionId,config)));
+    taskResults=this.taskLedger.ingest(scope,generated.taskEvents??[],permitted,{knownIds:this.taskCandidates(cwd).map(item=>item.id)});
+   }
    let promoted=0;if(!draftOnly&&this.getConfig().autoPromote)for(const candidate of this.candidates(cwd)){if(candidate.state!=='pending'||candidate.conflict||candidate.expired||candidate.confidence<this.getConfig().minConfidence||candidate.observations<this.getConfig().minObservations)continue;try{await this.approve(cwd,candidate.id,candidate.id,combined,id);promoted++;}catch{combined.throwIfAborted();rejected++;}}
-   const result={id,state:'completed',inputKey,staged,rejected,promoted,draftOnly,artifacts,...draftOnly?{message:'已从当前会话生成待审候选；请在记忆设置页审阅，未写入共享记忆文件。'}:{},usage:generated.usage??null,model:generated.model??null,batchCount:generated.batchCount,sourceCount:generated.sourceCount,sessionCount:generated.sessionCount};this.finish(id,result,!draftOnly&&this.getConfig().incremental&&rejected===0?generated.sources:[],kind);return result;
+   const result={id,state:'completed',inputKey,staged,rejected,promoted,taskResults,draftOnly,artifacts,...draftOnly?{message:'已从当前会话生成待审候选；请在记忆设置页审阅，未写入共享记忆文件。'}:{},usage:generated.usage??null,model:generated.model??null,batchCount:generated.batchCount,sourceCount:generated.sourceCount,sessionCount:generated.sessionCount};this.finish(id,result,!draftOnly&&this.getConfig().incremental&&rejected===0?generated.sources:[],kind);return result;
   }catch(error){const result={id,state:combined.aborted?'cancelled':'failed',error:error.message,artifacts:[]};if(started)this.finish(id,result);throw error;}finally{this.running.delete(scope);release();}
  }
  finish(id,result,processed=[],kind='dream'){
@@ -247,7 +267,7 @@ export class Memory {
  forget(cwd,id){const candidate=this.candidates(cwd).find(item=>item.id===id);if(!candidate)throw new Error('候选不存在');const row=this.db.prepare('SELECT * FROM candidates WHERE id=? AND scope=?').get(id,this.scope(cwd)),stores=this.knownVectorStores();
   if(candidate.state==='promoted'){const filename=safePath(cwd,'MEMORY.md'),before=readBounded(filename,65536);if(before===null)throw new Error('记忆文件已被人工删除');this.commits.write({cwd,relative:'MEMORY.md',preset:this.getConfig().agentPreset,scope:this.scope(cwd),before,after:removeBlock(before,id,candidate.published),maxBytes:65536,meta:{kind:'forget',id,stores,targets:[this.target(row)]}});}
   else this.commits.leaseOperation(()=>this.commits.transaction(()=>{if(this.db.prepare('SELECT 1 FROM memory_commit_targets WHERE target=?').get(id))throw new Error('该记忆存在待恢复写入，请先审阅恢复记录');const current=this.db.prepare('SELECT * FROM candidates WHERE id=? AND scope=?').get(id,this.scope(cwd));if(this.candidateFingerprint(current)!==this.candidateFingerprint(row))throw new Error('候选已变化，请重新审阅');this.forgetRecord(this.scope(cwd),id,stores);}));this.flushVectorPurges();return{id,state:'forgotten'};}
- forgetSession(cwd,sessionId){if(typeof sessionId!=='string'||sessionId.length>200)throw new Error('会话 ID 无效');this.db.prepare('INSERT OR IGNORE INTO forgotten VALUES(?,?)').run(this.scope(cwd),sessionId);return {excluded:true};}
+ forgetSession(cwd,sessionId){if(typeof sessionId!=='string'||sessionId.length>200)throw new Error('会话 ID 无效');const scope=this.scope(cwd);this.db.prepare('INSERT OR IGNORE INTO forgotten VALUES(?,?)').run(scope,sessionId);this.taskLedger.forgetSession(scope,sessionId);return {excluded:true};}
  registerVectorProvider(name,provider){if(typeof name!=='string'||!name||this.vectors.has(name)||typeof provider.search!=='function')throw new Error('向量提供方无效');this.vectors.set(name,provider);return()=>this.vectors.delete(name);}
  registerEmbeddingProvider(name,provider){return this.vectorIndex.registerEmbeddingProvider(name,provider);}
  registerVectorStore(name,store){const remove=this.vectorIndex.registerVectorStore(name,store);this.db.prepare('INSERT OR IGNORE INTO memory_vector_stores VALUES(?)').run(name);this.db.prepare('UPDATE memory_vector_purge SET error=NULL WHERE store=?').run(name);this.flushVectorPurges();return remove;}
@@ -275,6 +295,15 @@ export class Memory {
  }
  topicIndex(cwd){return {topics:memoryTopics(this.recalledCandidates(cwd)),source:'MEMORY.md',detailsTool:'memory_search'};}
  rebuildVectors(cwd,signal){return this.vectorIndex.rebuild(this.scope(cwd),this.recalledCandidates(cwd),this.getConfig(),signal?AbortSignal.any([signal,this.vectorAbort.signal]):this.vectorAbort.signal);}
+ taskSearch(cwd,query,limit=4){
+  if(!this.getConfig().taskTracking)return [];
+  const scope=this.scope(cwd),config=this.getConfig(),channels=channelSessionIds(this.ctx);
+  const forgotten=new Set(this.db.prepare('SELECT session FROM forgotten WHERE scope=?').all(scope).map(x=>x.session));
+  return this.taskLedger.search(scope,query,{limit,authorized:(session,requiresOwner)=>{
+   if(forgotten.has(session))return false;
+   return !requiresOwner&&!channels.has(session)||ownerChannelAuthorized(this.ctx,session,config);
+  }});
+ }
  async search(cwd,query,limit=8,signal){
   if(typeof query!=='string'||!query.trim()||query.length>1000||!Number.isSafeInteger(limit)||limit<1||limit>20)throw new Error('检索词或数量无效');const candidates=this.recalledCandidates(cwd);
   // Both retrieval legs enter the same ranking pass below.

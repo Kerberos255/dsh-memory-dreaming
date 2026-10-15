@@ -60,7 +60,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "test": "node --test tests/history-index.test.mjs tests/history-permanent.test.mjs tests/semantic-recall.test.mjs tests/weekly-archive.test.mjs",
+    "test": "node --test tests/history-index.test.mjs tests/history-permanent.test.mjs tests/semantic-recall.test.mjs tests/weekly-archive.test.mjs tests/status-timeline.test.mjs tests/task-ledger.test.mjs",
     "test:integration": "node --test tests/*.test.mjs"
   }
 }

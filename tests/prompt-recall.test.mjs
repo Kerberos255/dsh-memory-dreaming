@@ -47,3 +47,30 @@ test('assembly without target section does not change unrelated prompt carriers'
  const assembly={sections:[{name:'other',text:'untouched'}]};
  assert.equal(await callback(null,{agent},async()=>assembly),assembly);
 });
+
+test('status question automatically injects dated task observations but never promotes them to verified facts',async()=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'dsh-task-recall-'));
+ let listener,visible=true;
+ const query='PageLingo 嵌套标签修好了吗';
+ const agent={session:{id:'local-session',header:{cwd:root,agentPreset:'agent'},
+  surface:{nodes:[0]},eventAt:()=>({type:'user/message',data:{content:[{type:'text',text:query}]}})},
+  ctx:{inject(_names,callback){callback({
+   effect:fn=>fn(),systemPrompt:{section:()=>()=>{}},on:(_event,fn)=>listener=fn
+  });}}};
+ const config={enabled:true,recall:true,autoRecall:true,taskTracking:true,
+  agentPreset:'agent',workspace:root,autoRecallMaxItems:3,autoRecallMaxChars:1200};
+ const owner={configFile:{value:config,revision:1},memory:{
+  recalledCandidates:()=>[],
+  taskSearch:()=>visible?[{project:'PageLingo',task:'嵌套标签问题',status:'completed',
+   history:[{time:Date.parse('2026-10-12T00:00:00Z'),sessionId:'owner',seq:12,quote:'PageLingo 嵌套标签已经修好了。'}]}]:[]
+ }};
+ const assembly={sections:[{name:'memory:trusted-recall',text:''}]};
+ try{
+  attachAutoRecall(agent,owner,{get:()=>null});
+  const text=(await listener(null,{agent},async()=>assembly)).sections[0].text;
+  assert.match(text,/历史观察/);assert.match(text,/PageLingo/);
+  assert.match(text,/并非实时完成证明/);assert.match(text,/owner#12/);
+  visible=false;
+  assert.equal((await listener(null,{agent},async()=>assembly)).sections[0].text,'');
+ }finally{fs.rmSync(root,{recursive:true,force:true});}
+});

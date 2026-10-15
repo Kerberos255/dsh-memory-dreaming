@@ -59,3 +59,9 @@ MIT licensed. See [LICENSE](LICENSE).
 ## Optional plugin diagnostics
 
 The plugin optionally emits privacy-restricted operation and failure metadata to dsh-plugin-diagnostics. Diagnostics contain event type, status, fixed error code and elapsed time; conversation content and credentials are not logged. The diagnostics plugin is optional and does not change the host requirements.
+
+## Natural-language project and task memory
+
+Dream can extract source-backed task events from eligible user messages and link them to stable internal task/project IDs without requiring users to type canonical names. State changes (requested, in progress, blocked, completed, cancelled, reopened) are stored separately from verified long-term facts, with timestamps and verbatim source references. Unclear aliases remain separate rather than being forcibly merged. A status question can receive a dated task timeline via `memory_search` and limited owner-authorized recall; historical user statements are **not evidence of verified implementation**. Manual draft-only runs do not publish events, and revoked/forgotten sources are excluded.
+
+Daily, Dream and weekly consolidation now offer distinct configurable default content-guidance prompts, with a **Restore default** action in the plugin settings. Mandatory JSON, authorization and source verification remain code-enforced. Existing native DSH Session Log remains the evidence source. The task index is populated on new successful memory runs; older journals are still searchable but are not automatically backfilled into structured tasks.

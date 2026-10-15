@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { lexicalScore } from './recall-context.js';
 import { bounded } from './vector.js';
+import { needsStatusTimeline, statusTimeline } from './status-timeline.js';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 const DAY = /^20\d\d-\d\d-\d\d\.md$/;
@@ -226,6 +227,26 @@ export class HistoryIndex {
       used+=body.length+80;
     }
     return result;
+  }
+  /**
+   * Date-aware, bounded second retrieval leg. The ordinary semantic ranking
+   * is not a reliable way to discover changes after an old "in progress".
+   * Never promote a journal entry to a verified current fact.
+   */
+  timeline(cwd,query,{limit=4,signal}={}){
+    if(!needsStatusTimeline(query))return [];
+    signal?.throwIfAborted();
+    this.sync(cwd,{incremental:true});
+    const term=words(query).filter(x=>x.length>=2).slice(0,16);
+    if(!term.length)return [];
+    const db=this.open(),scope=hash(fs.realpathSync(cwd).toLowerCase());
+    const phrase=term.map(x=>'"'+x.replace(/"/g,'""')+'"').join(' OR ');
+    const rows=db.prepare(`SELECT c.id,c.filename,c.line,c.title,c.body
+      FROM history_fts JOIN history_chunks c ON c.id=history_fts.rowid
+      WHERE history_fts MATCH ? AND c.scope=?
+      ORDER BY c.filename DESC LIMIT 256`).all(phrase,scope);
+    signal?.throwIfAborted();
+    return statusTimeline(query,rows,{limit});
   }
   close(){this.db?.close();this.db=null;}
 }

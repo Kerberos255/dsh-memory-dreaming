@@ -12,6 +12,7 @@ import { maintenanceToolDenial, restrictMaintenanceTools } from './session-setup
 import { attachAutoRecall,isUntrustedChannel } from './recall-context.js';
 import { channelSessionIds,ownerChannelAuthorized } from './source-boundary.js';
 import { installDshEmbeddingBridge } from './dsh-embedding.js';
+import { needsStatusTimeline } from './status-timeline.js';
 
 export default class MemoryDreaming extends PluginConfig {
  static inject=['dshHomePath','workspaceController','sessionQuery','agentDefaultModel','llm','tokenMeter','settings','credentials'];
@@ -103,9 +104,12 @@ export default class MemoryDreaming extends PluginConfig {
  async searchUnified(cwd,query,limit=5,signal){
   const size=Number.isSafeInteger(limit)?Math.max(1,Math.min(20,limit)):5;
   const trusted=await this.memory.search(cwd,query,size,signal);
-  let imported=[];
+  let imported=[],statusEvidence=[];
+  const statusQuestion=needsStatusTimeline(query);
+  const taskMatches=statusQuestion?this.memory.taskSearch(cwd,query,Math.min(size,4)):[];
   try{
    imported=await this.history.search(cwd,query,{limit:size,maxChars:2000,incremental:true,semantic:true,vectorIndex:this.memory.vectorIndex,config:this.configFile.value,signal});
+   if(statusQuestion)statusEvidence=this.history.timeline(cwd,query,{limit:4,signal});
   }catch(error){
    signal?.throwIfAborted();
    // Historical data is optional; never disable verified long-term memory.
@@ -120,7 +124,8 @@ export default class MemoryDreaming extends PluginConfig {
    if(used+cost>2000)continue;
    used+=cost;matches.push(item);
   }
-  return {mode:imported.length?'combined':trusted.mode,matches,historyIndexed:this.history.status(cwd).indexed};
+  return {mode:imported.length?'combined':trusted.mode,matches,historyIndexed:this.history.status(cwd).indexed,
+   ...(statusQuestion?{taskMatches,statusEvidence,temporalCaution:'状态证据只是当时的历史记录，不是实时事实；优先核对同一事项时间最新的明确状态，发现冲突或缺少后续记录时不得断言当前已完成或仍在进行。'}:{})};
  }
  search(query,limit){return this.operation((cwd,signal)=>this.searchUnified(cwd,query,limit??5,signal));}
  rebuildHistory(){return this.operation(cwd=>this.history.sync(cwd,{incremental:true}));}

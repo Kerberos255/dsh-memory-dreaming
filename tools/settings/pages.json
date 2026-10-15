@@ -25,6 +25,30 @@
         "help": "主人由 Channel Core 认领并核验；两渠道共用会话仍需在 Channel Core 关联身份。其他人的私聊与群聊不会召回个人记忆。"
       },
       {
+        "key": "autoRecallMode",
+        "label": "自动召回方式",
+        "group": "跨会话召回",
+        "type": "select",
+        "when": {
+          "autoRecall": true
+        },
+        "options": [
+          [
+            "keyword",
+            "仅关键词（最快）"
+          ],
+          [
+            "fallback",
+            "关键词优先，语义补充（推荐）"
+          ],
+          [
+            "hybrid",
+            "始终混合检索（更全面，但更慢）"
+          ]
+        ],
+        "help": "关键词匹配不足时，语义检索最多等待 1.5 秒；异常时自动回退。仍然只检索已发布、可信来源的事实。"
+      },
+      {
         "key": "autoRecallMaxItems",
         "label": "每次自动召回最多几条",
         "group": "跨会话召回",
@@ -34,7 +58,7 @@
         "when": {
           "autoRecall": true
         },
-        "help": "默认最多 3 条。召回只在有明显关键词命中时触发。"
+        "help": "默认最多 3 条；开启语义检索也不增加注入条数。"
       },
       {
         "key": "autoRecallMaxChars",
@@ -88,6 +112,30 @@
         "min": 30,
         "max": 3650,
         "help": "默认 180 天。到期的长期事实保留在 MEMORY.md，但暂停自动召回，等待你确认它依然有效；手动检索仍可看到并标记待复核。"
+      },
+      {
+        "key": "historyAutoArchive",
+        "label": "自动保存久远周记的永久快照",
+        "group": "历史归档",
+        "type": "boolean",
+        "help": "默认开启。成功完成每周整理后检查年限，只生成同工作区永久副本，不移动或修改原周记。"
+      },
+      {
+        "key": "historyKeepDaily",
+        "label": "永久保留每日记忆",
+        "group": "历史归档",
+        "type": "boolean",
+        "help": "默认开启。14 天临时备份到期时，先校验并保存永久副本；保存失败则不清理临时备份。"
+      },
+      {
+        "key": "historyArchiveDays",
+        "label": "旧文件归档年限（天）",
+        "group": "历史归档",
+        "type": "number",
+        "min": 30,
+        "max": 3650,
+        "step": 1,
+        "help": "默认 365 天；仅影响旧文件永久快照，不改变周归档后 14 天临时备份规则。"
       },
       {
         "key": "incremental",
@@ -169,9 +217,41 @@
         "type": "model"
       },
       {
+        "key": "taskTracking",
+        "label": "自动识别项目与任务状态",
+        "group": "项目任务记忆",
+        "type": "boolean",
+        "help": "在每日与 Dream 整理时提炼有原话证据的任务事件，动态匹配旧任务；不需要人工填写固定项目 ID，来源不确定时不强行合并。"
+      },
+      {
+        "key": "dailyPrompt",
+        "label": "每日记忆提示词",
+        "group": "整理提示词",
+        "type": "multiline",
+        "resetToDefault": true,
+        "help": "按当天证据记录任务及状态变化，不把当日未完成视为永久状态。"
+      },
+      {
+        "key": "dreamPrompt",
+        "label": "Dream 提炼提示词",
+        "group": "整理提示词",
+        "type": "multiline",
+        "resetToDefault": true,
+        "help": "聚焦有出处的长期知识，避免将临时任务进度晋升为长期事实。"
+      },
+      {
+        "key": "weeklyPrompt",
+        "label": "每周整理提示词",
+        "group": "整理提示词",
+        "type": "multiline",
+        "resetToDefault": true,
+        "help": "按日期串联进度状态，区分周内记录和真实事件发生日。"
+      },
+      {
         "key": "maxOutputTokens",
         "label": "单次整理初始输出 token",
         "type": "number",
+        "help": "生成完整 JSON 后会自行停止；单条来源截断才按需增加，最多 16384 tokens（还受模型和上下文限制）。",
         "min": 256,
         "max": 16384,
         "step": 1
