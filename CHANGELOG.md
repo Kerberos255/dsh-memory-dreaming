@@ -21,3 +21,7 @@ See Git history for release-specific commits; passing host-free tests is not pro
 ## Unreleased · project/task memory and editable prompts
 
 - Add source-backed natural-language task/project identity, dated state transitions, cautious status retrieval, independent daily/Dream/weekly prompts, and editable defaults.
+
+## 0.2.28 (2026-10-16)
+
+- Emit an optional host event after a scheduled Dream workflow's first persisted failure. No Channel Core dependency, model output, memory text, or task-result mutation.

@@ -156,7 +156,19 @@ export class WorkflowLedger {
    if(cursor.turn===data.turn)cursor.turn=null;
   }
  }
- set(id,state,note=null,result){this.db.prepare('UPDATE workflows SET state=?,note=?,updated=?,result=COALESCE(?,result) WHERE id=?').run(state,note,Date.now(),result?JSON.stringify(result):null,id);if(['failed','needs-review','interrupted'].includes(state))this.ctx.get('pluginDiagnostics')?.record('dsh-memory-dreaming','error','workflow.state',{state:state==='failed'?'failed':'interrupted'});else if(state==='completed')this.ctx.get('pluginDiagnostics')?.record('dsh-memory-dreaming','info','workflow.completed',{state:'completed'});}
+ set(id,state,note=null,result){
+  const before=this.db.prepare('SELECT state FROM workflows WHERE id=?').get(id)?.state;
+  this.db.prepare('UPDATE workflows SET state=?,note=?,updated=?,result=COALESCE(?,result) WHERE id=?').run(state,note,Date.now(),result?JSON.stringify(result):null,id);
+  if(['failed','needs-review','interrupted'].includes(state))this.ctx.get('pluginDiagnostics')?.record('dsh-memory-dreaming','error','workflow.state',{state:state==='failed'?'failed':'interrupted'});
+  else if(state==='completed')this.ctx.get('pluginDiagnostics')?.record('dsh-memory-dreaming','info','workflow.completed',{state:'completed'});
+  if(state==='failed'&&before!=='failed'){
+   const row=this.db.prepare('SELECT origin,kind FROM workflows WHERE id=?').get(id);
+   if(row?.origin==='scheduled')queueMicrotask(()=>{
+    try{Promise.resolve(this.ctx.emit('dsh/task-alert',{source:'dsh-memory-dreaming',id,kind:row.kind,origin:'scheduled',state:'failed'})).catch(()=>{});}
+    catch{ /* Alert delivery is optional; never fail the memory workflow. */ }
+   });
+  }
+ }
  bind(id,run){const row=this.db.prepare('SELECT * FROM workflows WHERE id=?').get(id),job=this.db.prepare('SELECT * FROM runs WHERE id=?').get(run);if(!row||!job||row.scope!==job.scope||row.kind!==job.kind||row.run)throw new Error('自动任务运行记录已变化');this.db.prepare('UPDATE workflows SET run=?,updated=? WHERE id=?').run(run,Date.now(),id);this.checkpoint('workflow-run-linked');}
  record(session,turn,kind,result){
   const job=this.db.prepare('SELECT * FROM runs WHERE id=?').get(result.id);if(!job||job.kind!==kind)return;
