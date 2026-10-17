@@ -1,6 +1,6 @@
 {
   "name": "dsh-memory-dreaming",
-  "version": "0.2.30",
+  "version": "0.2.31",
   "type": "module",
   "license": "MIT",
   "description": "从原生会话整理日常记忆、Dream 与每周复查，保留出处并审阅长期事实。",
@@ -37,7 +37,7 @@
     "@deepseek-ai/dsh-token-meter": "0.2.0-rc.2 || 0.2.1-rc.2 || 0.2.1-alpha.1 || >=0.2.1",
     "@deepseek-ai/dsh-schedule": "0.2.0-rc.2 || 0.2.1-rc.2 || 0.2.1-alpha.1 || >=0.2.1",
     "@deepseek-ai/dsh-api-session-controller": "0.2.0-rc.2 || 0.2.1-rc.2 || 0.2.1-alpha.1 || >=0.2.1",
-    "@deepseek-ai/cordis": "4.0.4 || 4.0.5-alpha.1 || 4.0.5"
+    "@deepseek-ai/cordis": "4.0.5-alpha.1 || >=4.0.4 <5.0.0"
   },
   "dsh": {
     "bundle": {
