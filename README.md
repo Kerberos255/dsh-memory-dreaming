@@ -4,10 +4,16 @@
 
 Turn verified DSH conversations into **daily journals, Dream consolidations, weekly reviews, and searchable long-term memory**, without loading whole conversations into every prompt.
 
+## Incremental Dream consolidation
+
+Dream processes up to seven new or modified managed daily journals per run (looking back at most 30 days), including securely archived daily copies. It never rescans the raw transcript as part of routine consolidation. Source-backed candidate extraction and task tracking remain with the daily pipeline; a Dream model output containing fabricated facts or task events is rejected.
+
+Successful complete model batches are cached in derived SQLite for up to seven days; model transport failures can retry once and unfinished work remains eligible for the next run. The model request cancellation budget is 120 seconds and the overall consolidation cancellation budget is eight minutes. No new journals means no model call. Successful daily analysis advances its source cursor even if some candidate facts are rejected; model failure does not advance that cursor.
+
 ## Memory lifecycle
 
 1. **Daily journal:** summarize eligible user messages into `memory/YYYY-MM-DD.md`.
-2. **Dream:** consolidate recent experiences into `DREAMS.md` and candidate facts.
+2. **Dream:** incrementally consolidate new or updated daily journals into `DREAMS.md` without rescanning raw conversations or fabricating candidate evidence.
 3. **Long-term memory:** verify source evidence and publish approved facts to managed sections of `MEMORY.md`.
 4. **Recall:** fetch a few relevant published facts from the current authorized workspace; optional embeddings complement keyword search.
 5. **Weekly review:** merge the previous week's daily journals, track coverage, and safely archive eligible daily files.

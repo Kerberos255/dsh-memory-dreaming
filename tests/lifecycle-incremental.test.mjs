@@ -59,43 +59,29 @@ test('channel provenance survives plugin unloading, and rejects workspace-shared
  }finally{fs.rmSync(root,{recursive:true,force:true});}
 });
 
-test('incremental Dream processes only accepted events; failed run leaves cursor unchanged',async()=>{
- const root=fs.mkdtempSync(path.join(os.tmpdir(),'dsh-dream-incremental-'));
- const config={...schema.defaults,automatic:false,incremental:true};
- let events=[{
-   seq:0,type:'user/message',surfaceOp:'append',time:Date.now(),
-   data:{content:[{type:'text',text:'项目继续使用 Bergamot 和 API'}]}
- }];
- const ctx={
-  dshHomePath:(...parts)=>path.join(root,'dsh-home',...parts),
-  sessionQuery:{
-   listSessions:async()=>[{header:{id:'session-A',cwd:root,agentPreset:'agent'}}],
-   observeSession:async()=>({header:{id:'session-A',cwd:root},projections:{values:{agentPreset:'agent'}},
-     events,inheritedEventCount:0,[Symbol.dispose](){} })
-  }
- };
+test('daily records analyzed source events even when an invalid fact is rejected, without duplicate reprocessing',async()=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'dsh-daily-incremental-'));
+ const config={...schema.defaults,incremental:true};
+ const time=Date.parse('2026-10-08T10:00:00.000Z');
+ let events=[{seq:0,type:'user/message',surfaceOp:'append',time,data:{content:[{type:'text',text:'有出处的项目决定'}]}}];
+ const ctx={dshHomePath:(...parts)=>path.join(root,'home',...parts),
+  sessionQuery:{listSessions:async()=>[{header:{id:'session-A',cwd:root,agentPreset:'agent'}}],
+   observeSession:async()=>({events,inheritedEventCount:0,[Symbol.dispose](){}})}};
  const memory=new Memory(path.join(root,'state.sqlite'),ctx,()=>config);
- const seen=[];
- memory.completion=async(_cwd,kind,sources)=>{seen.push(sources.map(x=>x.seq));return {facts:[],sources,dream:''};};
+ let calls=0;
+ memory.completion=async(_cwd,kind,sources)=>{calls++;return{facts:[{text:'无有效来源'}],sources,daily:'有出处的工作进展'};};
  try{
-  const first=await memory.run(root,'dream',{day:'2026-10-08'});
-  assert.equal(first.state,'completed');
-  assert.deepEqual(seen,[[0]]);
-  assert.equal(memory.db.prepare('SELECT COUNT(*) as n FROM memory_processed_sources').get().n,1);
-  const second=await memory.run(root,'dream',{day:'2026-10-08'});
-  assert.equal(second.empty,true);
-  assert.deepEqual(seen,[[0]]);
-  events=[...events,{...events[0],seq:1,data:{content:[{type:'text',text:'新版增加了词语检索'}]}}];
+  const first=await memory.run(root,'daily',{day:'2026-10-08'});
+  assert.equal(first.state,'completed');assert.equal(first.rejected,1);
+  assert.equal(memory.db.prepare("SELECT COUNT(*) AS n FROM memory_processed_sources WHERE kind='daily'").get().n,1);
+  const second=await memory.run(root,'daily',{day:'2026-10-08'});
+  assert.equal(second.empty,true);assert.equal(calls,1);
+  events=[...events,{...events[0],seq:1,data:{content:[{type:'text',text:'新的后续决定'}]}}];
   memory.completion=async()=>{throw Error('model unavailable');};
-  await assert.rejects(memory.run(root,'dream',{day:'2026-10-08'}),/model unavailable/);
-  assert.equal(memory.db.prepare('SELECT COUNT(*) as n FROM memory_processed_sources').get().n,1);
-  memory.completion=async(_cwd,kind,sources)=>{seen.push(sources.map(x=>x.seq));return{facts:[],sources,dream:''};};
-  await memory.run(root,'dream',{day:'2026-10-08'});
-  assert.deepEqual(seen,[[0],[1]]);
-  assert.equal(memory.db.prepare('SELECT COUNT(*) as n FROM memory_processed_sources').get().n,2);
+  await assert.rejects(memory.run(root,'daily',{day:'2026-10-08'}),/model unavailable/);
+  assert.equal(memory.db.prepare('SELECT COUNT(*) AS n FROM memory_processed_sources').get().n,1);
  }finally{await memory.close();fs.rmSync(root,{recursive:true,force:true});}
 });
-
 
 test('Dream collects another Agent preset inside the same trusted workspace',async()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'dsh-cross-preset-memory-'));

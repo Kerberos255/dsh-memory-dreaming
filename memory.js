@@ -11,6 +11,8 @@ import { initLifecycle,publishVersion,forgetVersion,versionOf,reviewStatus,memor
 import { channelSessionIds,publicMemorySourceAllowed,ownerChannelAuthorized } from './source-boundary.js';
 import { WeeklyArchives } from './weekly-archive.js';
 import { runWeeklyArchive } from './weekly-run.js';
+import {runDreamDelta} from './dream-run.js';
+import {initDreamDiaries,finishDreamDiaries} from './dream-delta.js';
 import { TaskLedger } from './task-ledger.js';
 
 const normalize=value=>value.normalize('NFKC').toLocaleLowerCase('en-US').replace(/[\s\p{P}\p{S}]+/gu,'');
@@ -49,6 +51,7 @@ export class Memory {
     PRIMARY KEY(scope,kind,session,seq)
   );`);
   initLifecycle(this.db);
+  initDreamDiaries(this.db);
   this.taskLedger=new TaskLedger(this.db);
   this.sourceQuery=this.db.prepare('SELECT payload FROM sources WHERE candidate=? ORDER BY identity');
   if(!this.db.prepare('PRAGMA table_info(artifacts)').all().some(row=>row.name==='run'))this.db.exec('ALTER TABLE artifacts ADD COLUMN run TEXT');
@@ -179,6 +182,11 @@ export class Memory {
     this.finish(id,weekly.result,this.getConfig().incremental&&weekly.result.rejected===0?weekly.sources:[],'weekly');
     return weekly.result;
    }
+   if(kind==='dream'&&!draftOnly){
+    const dream=await runDreamDelta(this,cwd,{day,signal:combined,agent,id,scope,redact});
+    this.finish(id,dream.result,[],'dream',dream.entries);
+    return dream.result;
+   }
    const diagnostics={};
    const sources=await this.collect(cwd,combined,{day:['daily','weekly'].includes(kind)?day:undefined,weekly:kind==='weekly',sessionId:sourceSessionId,kind,timeZone,diagnostics});
    if(!sources.length){
@@ -214,15 +222,19 @@ export class Memory {
     taskResults=this.taskLedger.ingest(scope,generated.taskEvents??[],permitted,{knownIds:this.taskCandidates(cwd).map(item=>item.id)});
    }
    let promoted=0;if(!draftOnly&&this.getConfig().autoPromote)for(const candidate of this.candidates(cwd)){if(candidate.state!=='pending'||candidate.conflict||candidate.expired||candidate.confidence<this.getConfig().minConfidence||candidate.observations<this.getConfig().minObservations)continue;try{await this.approve(cwd,candidate.id,candidate.id,combined,id);promoted++;}catch{combined.throwIfAborted();rejected++;}}
-   const result={id,state:'completed',inputKey,staged,rejected,promoted,taskResults,draftOnly,artifacts,...draftOnly?{message:'已从当前会话生成待审候选；请在记忆设置页审阅，未写入共享记忆文件。'}:{},usage:generated.usage??null,model:generated.model??null,batchCount:generated.batchCount,sourceCount:generated.sourceCount,sessionCount:generated.sessionCount};this.finish(id,result,!draftOnly&&this.getConfig().incremental&&rejected===0?generated.sources:[],kind);return result;
+   const result={id,state:'completed',inputKey,staged,rejected,promoted,taskResults,draftOnly,artifacts,...draftOnly?{message:'已从当前会话生成待审候选；请在记忆设置页审阅，未写入共享记忆文件。'}:{},usage:generated.usage??null,model:generated.model??null,batchCount:generated.batchCount,sourceCount:generated.sourceCount,sessionCount:generated.sessionCount};this.finish(id,result,!draftOnly&&this.getConfig().incremental?generated.sources:[],kind);return result;
   }catch(error){const result={id,state:combined.aborted?'cancelled':'failed',error:error.message,artifacts:[]};if(started)this.finish(id,result);throw error;}finally{this.running.delete(scope);release();}
  }
- finish(id,result,processed=[],kind='dream'){
+ finish(id,result,processed=[],kind='dream',dreamEntries=[]){
   const committed=this.runArtifacts(id);
   if(committed.length)result.artifacts=[...new Map([...(result.artifacts??[]),...committed].map(row=>[row.path,row])).values()];
   this.db.exec('BEGIN IMMEDIATE');
   try{
    this.db.prepare('UPDATE runs SET state=?,ended=?,result=? WHERE id=?').run(result.state,Date.now(),JSON.stringify(result),id);
+   if(result.state==='completed'&&dreamEntries.length){
+    const scope=this.db.prepare('SELECT scope FROM runs WHERE id=?').get(id).scope;
+    finishDreamDiaries(this.db,scope,dreamEntries);
+   }
    if(result.state==='completed'&&processed.length){
     const scope=this.db.prepare('SELECT scope FROM runs WHERE id=?').get(id).scope;
     const insert=this.db.prepare('INSERT OR IGNORE INTO memory_processed_sources VALUES(?,?,?,?,?)');
