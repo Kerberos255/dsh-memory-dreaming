@@ -159,7 +159,7 @@ export class WorkflowLedger {
  set(id,state,note=null,result){
   const before=this.db.prepare('SELECT state FROM workflows WHERE id=?').get(id)?.state;
   this.db.prepare('UPDATE workflows SET state=?,note=?,updated=?,result=COALESCE(?,result) WHERE id=?').run(state,note,Date.now(),result?JSON.stringify(result):null,id);
-  if(['failed','needs-review','interrupted'].includes(state))this.ctx.get('pluginDiagnostics')?.record('dsh-memory-dreaming','error','workflow.state',{state:state==='failed'?'failed':'interrupted'});
+  if(['failed','needs-review','interrupted'].includes(state)&&before!==state)this.ctx.get('pluginDiagnostics')?.record('dsh-memory-dreaming','error','workflow.state',{state:state==='failed'?'failed':'interrupted'});
   else if(state==='completed')this.ctx.get('pluginDiagnostics')?.record('dsh-memory-dreaming','info','workflow.completed',{state:'completed'});
   if(state==='failed'&&before!=='failed'){
    const row=this.db.prepare('SELECT origin,kind FROM workflows WHERE id=?').get(id);

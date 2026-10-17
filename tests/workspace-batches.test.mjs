@@ -6,7 +6,6 @@ import os from 'node:os';
 import {completeWorkspaceMemory} from '../memory-batches.js';
 import {Memory,withinMemoryWorkspace} from '../memory.js';
 import {schema} from '../config.js';
-import {withOpenCodeSessionHeader} from '../../../tooling/sdk/node_modules/@earendil-works/pi-ai/dist/providers/opencode-headers.js';
 
 function setup(){
  const cwd=fs.mkdtempSync(path.join(os.tmpdir(),'dsh-memory-batch-'));
@@ -116,7 +115,10 @@ test('a later batch failure never reports complete coverage',async()=>{
  }finally{h.close();}
 });
 
-test('OpenCode Go adapter attaches the required session header',()=>{
+test('OpenCode Go adapter attaches the required session header',async(t)=>{
+ let withOpenCodeSessionHeader;
+ try{({withOpenCodeSessionHeader}=await import('../../../tooling/sdk/node_modules/@earendil-works/pi-ai/dist/providers/opencode-headers.js'));}
+ catch(error){if(error?.code==='ERR_MODULE_NOT_FOUND'){t.skip('OpenCode Go adapter belongs to the external DSH tooling SDK');return;}throw error;}
  const capture={streamSimple:(_model,_context,options)=>options,stream:(_model,_context,options)=>options};
  const wrapper=withOpenCodeSessionHeader(capture);
  assert.equal(wrapper.streamSimple(null,null,{}).headers,undefined);

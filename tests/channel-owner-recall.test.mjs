@@ -52,11 +52,14 @@ test('identity settings are opt-in, validated, and do not enable background Drea
  assert.throws(()=>schema.validate({...updated,ownerIdentityId:'bad owner id'}));
 });
 
-test('settings no longer ask for a second channel owner identity',()=>{
+test('settings no longer ask for a second channel owner identity',(t)=>{
  const config=JSON.parse(fs.readFileSync(new URL('../config.example.json',import.meta.url),'utf8'));
- const pages=JSON.parse(fs.readFileSync(new URL("../../_shared/plugin-settings/pages.json",import.meta.url),'utf8'));
- const fields=pages['dsh-memory-dreaming'].fields;
- assert.equal(fields.filter(row=>row.key==='ownerIdentityId').length,0);
+ const sharedPages=new URL("../../_shared/plugin-settings/pages.json",import.meta.url);
+ if(fs.existsSync(sharedPages)){
+  const pages=JSON.parse(fs.readFileSync(sharedPages,'utf8'));
+  const fields=pages['dsh-memory-dreaming'].fields;
+  assert.equal(fields.filter(row=>row.key==='ownerIdentityId').length,0);
+ }else t.diagnostic('Shared settings UI generator is tested in the monorepo; standalone plugin checks effective defaults.');
  assert.equal(config.ownerIdentityId,'owner','generated example must not accidentally disable owner recognition');
  assert.equal(schema.validate(config).ownerIdentityId,'owner','effective default stays compatible with Channel Core');
  assert.equal(schema.validate({...config,ownerIdentityId:'custom-owner'}).ownerIdentityId,'custom-owner','existing advanced identity mappings remain valid');
