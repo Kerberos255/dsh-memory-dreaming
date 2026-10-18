@@ -13,6 +13,7 @@ import { attachAutoRecall,isUntrustedChannel } from './recall-context.js';
 import { channelSessionIds,ownerChannelAuthorized } from './source-boundary.js';
 import { installDshEmbeddingBridge } from './dsh-embedding.js';
 import { needsStatusTimeline } from './status-timeline.js';
+import { memoryReadAction } from './memory-read-action.js';
 
 export default class MemoryDreaming extends PluginConfig {
  static inject=['dshHomePath','workspaceController','sessionQuery','agentDefaultModel','llm','tokenMeter','settings','credentials'];
@@ -58,7 +59,7 @@ export default class MemoryDreaming extends PluginConfig {
       catch(error){this.context.get('pluginDiagnostics')?.record('dsh-memory-dreaming','warn','history-archive-unavailable',{code:error?.code??'unavailable'});}
     }
     return result;
-   }],['memory_search','检索已发布长期事实，以及当前日记、周记和永久历史归档；历史记录带来源与未审核标记。向量失效回退词语检索。',{query:{type:'string'},limit:{type:'integer',minimum:1,maximum:20}},(args,exec,cwd)=>this.searchUnified(cwd,args.query,args.limit??5,exec.signal)],['memory_topics','只读查看已确认记忆的主题索引；再使用 memory_search 深入查找对应事实。',{},(_args,_exec,cwd)=>this.memory.topicIndex(cwd)]];
+   }],['memory_search','统一只读记忆入口：action=search（默认）检索已发布长期事实、日记、周记和历史归档；action=topics 查看已确认主题索引。历史记录包含来源及未审核标记，向量不可用时回退词语检索。',{action:{type:'string',enum:['search','topics']},query:{type:'string'},limit:{type:'integer',minimum:1,maximum:20}},(args,exec,cwd)=>memoryReadAction(args,{topics:()=>this.memory.topicIndex(cwd),search:(query,limit)=>this.searchUnified(cwd,query,limit,exec.signal)})]];
    for(const [name,description,properties,execute]of tools)scope.tools.register({name,description,parameters:{type:'object',properties,additionalProperties:false},output:{schema:{type:'object',additionalProperties:true},render:(_args,value)=>[{type:'text',text:JSON.stringify(value)}]},execute:async(args,exec)=>{
     exec.signal.throwIfAborted();if(!this.configFile.value.enabled||!exec.agent)throw new Error('记忆插件已停用');const cwd=exec.agent.session.header.cwd,preset=ctx.get('sessionProjections')?.stateOf(exec.agent.session,'agentPreset');
     if(!cwd||typeof preset!=='string')throw new Error('当前会话缺少有效工作区或 Agent 预设');

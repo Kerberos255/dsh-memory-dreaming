@@ -1,6 +1,6 @@
 {
   "name": "dsh-memory-dreaming",
-  "version": "0.2.32",
+  "version": "0.2.33",
   "type": "module",
   "license": "MIT",
   "description": "从原生会话整理日常记忆、Dream 与每周复查，保留出处并审阅长期事实。",
@@ -61,7 +61,7 @@
     "dsh": ">=0.2.0-rc.2"
   },
   "scripts": {
-    "test": "node --test tests/history-index.test.mjs tests/history-permanent.test.mjs tests/semantic-recall.test.mjs tests/weekly-archive.test.mjs tests/status-timeline.test.mjs tests/task-ledger.test.mjs tests/task-alert.test.mjs",
+    "test": "node --test tests/history-index.test.mjs tests/history-permanent.test.mjs tests/semantic-recall.test.mjs tests/memory-read-action.test.mjs tests/weekly-archive.test.mjs tests/status-timeline.test.mjs tests/task-ledger.test.mjs tests/task-alert.test.mjs",
     "test:integration": "node --test tests/*.test.mjs"
   },
   "dshCompatibility": {

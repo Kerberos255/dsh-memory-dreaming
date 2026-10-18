@@ -24,7 +24,7 @@ The original native DSH session log remains the evidence source. Candidate memor
 
 Automatic recall of **verified, source-backed long-term memory** can use keyword, semantic-fallback, or hybrid matching (`autoRecallMode`). Embedding failures fall back to lexical retrieval; content from unverified history never enters trusted automatic recall.
 
-The plugin maintains a scoped, incremental SQLite index for explicit `memory_search` over curated archives under `memory/history/{daily,weekly,monthly,notes}/`. Only these structured Markdown paths are scanned; account/configuration files and migrated raw sessions are excluded. Rolling daily/weekly maintenance preserves permanent archive copies according to the history settings. No user archives or migration scripts are included in this public package.
+The single read-only `memory_search` model tool supports `action: 'search'` (default, compatible with existing queries) and `action: 'topics'` (the verified topic index). The plugin maintains a scoped, incremental SQLite index for explicit `memory_search` over curated archives under `memory/history/{daily,weekly,monthly,notes}/`. Only these structured Markdown paths are scanned; account/configuration files and migrated raw sessions are excluded. Rolling daily/weekly maintenance preserves permanent archive copies according to the history settings. No user archives or migration scripts are included in this public package.
 
 CI runs portable memory-indexing and recall tests using `npm test`. The full plugin integration suite (`npm run test:integration`) requires a compatible DSH host with the declared peer services.
 

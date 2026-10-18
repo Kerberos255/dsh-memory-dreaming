@@ -50,7 +50,7 @@ dsh plugin --profile desktop add github:Kerberos255/dsh-memory-dreaming
 
 ## 语义召回与永久历史
 
-- `memory_search` 可以主动检索已发布的长期事实，以及当前日记、周记和结构化历史归档；历史材料会标明来源与未审核状态，**未审核历史不会进入可信自动召回**。
+- `memory_search` 是统一只读入口：`action=search`（默认）检索已发布的长期事实及当前日记、周记和结构化历史归档，`action=topics` 查看已确认记忆的主题索引；历史材料会标明来源与未审核状态，**未审核历史不会进入可信自动召回**。
 - 自动召回有 `autoRecallMode`（关键词、语义失败回退、混合模式）和数量/字符上限。向量模型是可选增强，失败时回退词语检索，不要求必须配置 Embedding。
 - 历史归档存放在 `memory/history/{daily,weekly,monthly,notes}/`，按工作区增量索引；不会把账号配置、原始迁移会话或其他不相关目录纳入归档检索。
 
