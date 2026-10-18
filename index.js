@@ -48,7 +48,7 @@ export default class MemoryDreaming extends PluginConfig {
    // Scheduled maintenance Sessions may only invoke the typed memory_dream tool.
    // Denial is monotonic; it never auto-approves shell access or other permissions.
    scope.tools.guard(exec=>maintenanceToolDenial(exec,this.workflows,ctx));
-   const tools=[['memory_dream','从当前会话整理 daily、dream 或 weekly 候选，普通会话不读取其他会话、不写入共享记忆文件；工作区归档通过记忆设置页或已启用的官方自动任务执行。',{kind:{type:'string',enum:['daily','dream','weekly']},day:{type:'string'}},async(args,exec,cwd)=>{
+   const tools=[['memory_dream','整理 daily/dream/weekly 记忆。普通 Session 只生成草稿、不访问其他会话；受管维护 Session 可按任务设置归档。',{kind:{type:'string',enum:['daily','dream','weekly']},day:{type:'string'}},async(args,exec,cwd)=>{
     const maintenance=exec.agent.session.id===this.sessionId(cwd),kind=args.kind??'dream';
     const scheduled=maintenance?this.workflows.current(exec.agent.session.id,kind).filter(row=>row.origin!=='manual'):[];
     if(maintenance&&!this.configFile.value.automatic&&scheduled.length){for(const row of scheduled)this.workflows.set(row.id,'cancelled','自动归档已关闭，本次记忆作业未执行。');if(!this.workflows.current(exec.agent.session.id,kind).some(row=>row.origin==='manual'))return{state:'cancelled',artifacts:[],message:'自动归档已关闭。'};}
@@ -59,7 +59,7 @@ export default class MemoryDreaming extends PluginConfig {
       catch(error){this.context.get('pluginDiagnostics')?.record('dsh-memory-dreaming','warn','history-archive-unavailable',{code:error?.code??'unavailable'});}
     }
     return result;
-   }],['memory_search','统一只读记忆入口：action=search（默认）检索已发布长期事实、日记、周记和历史归档；action=topics 查看已确认主题索引。历史记录包含来源及未审核标记，向量不可用时回退词语检索。',{action:{type:'string',enum:['search','topics']},query:{type:'string'},limit:{type:'integer',minimum:1,maximum:20}},(args,exec,cwd)=>memoryReadAction(args,{topics:()=>this.memory.topicIndex(cwd),search:(query,limit)=>this.searchUnified(cwd,query,limit,exec.signal)})]];
+   }],['memory_search','只读检索已发布的长期记忆、日记、周记和历史归档；action=topics 查看主题索引。包含来源标记。',{action:{type:'string',enum:['search','topics']},query:{type:'string'},limit:{type:'integer',minimum:1,maximum:20}},(args,exec,cwd)=>memoryReadAction(args,{topics:()=>this.memory.topicIndex(cwd),search:(query,limit)=>this.searchUnified(cwd,query,limit,exec.signal)})]];
    for(const [name,description,properties,execute]of tools)scope.tools.register({name,description,parameters:{type:'object',properties,additionalProperties:false},output:{schema:{type:'object',additionalProperties:true},render:(_args,value)=>[{type:'text',text:JSON.stringify(value)}]},execute:async(args,exec)=>{
     exec.signal.throwIfAborted();if(!this.configFile.value.enabled||!exec.agent)throw new Error('记忆插件已停用');const cwd=exec.agent.session.header.cwd,preset=ctx.get('sessionProjections')?.stateOf(exec.agent.session,'agentPreset');
     if(!cwd||typeof preset!=='string')throw new Error('当前会话缺少有效工作区或 Agent 预设');
