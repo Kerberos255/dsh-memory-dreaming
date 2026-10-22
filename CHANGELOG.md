@@ -1,3 +1,7 @@
+## 0.2.35
+
+- Keep `DREAMS.md` bounded: managed Dream blocks older than `dreamRetentionDays` (default 30 days, 0 keeps everything) move to `memory/history/dreams/<YYYY-MM>.md` right after the day's block is committed. The archive is written before the block is removed, so a crash can duplicate a block but never lose it, and text outside the managed markers is never touched.
+
 # Changelog · Dream & Memory
 
 Historical updates previously mixed into README are collected here. Current behavior and installation: [English](README.md) / [简体中文](README.zh-CN.md).

@@ -12,6 +12,7 @@ import { channelSessionIds,publicMemorySourceAllowed,ownerChannelAuthorized } fr
 import { WeeklyArchives } from './weekly-archive.js';
 import { runWeeklyArchive } from './weekly-run.js';
 import {runDreamDelta} from './dream-run.js';
+import {archiveDreamBlocks} from './dream-archive.js';
 import {initDreamDiaries,finishDreamDiaries} from './dream-delta.js';
 import { TaskLedger } from './task-ledger.js';
 
@@ -168,7 +169,14 @@ export class Memory {
  async completion(cwd,kind,sources,signal,agent){return completeWorkspaceMemory({ctx:this.ctx,config:this.getConfig(),cwd,kind,sources,signal,agent,redact,knownTasks:this.taskCandidates(cwd)});}
  artifact(cwd,relative,blockId,body,maxBytes=1048576,runId=null){
   if(!body?.trim())return null;const parts=relative.split('/');if(parts.length>1)ownedDirectory(cwd,parts.slice(0,-1).join('/'));const filename=safePath(cwd,relative),before=readBounded(filename,maxBytes),after=replaceBlock(before??'',blockId,body);
-  return this.commits.write({cwd,relative,preset:this.getConfig().agentPreset,scope:this.scope(cwd),before,after,maxBytes,meta:{kind:'report',runId,targets:[]}});
+  const committed=this.commits.write({cwd,relative,preset:this.getConfig().agentPreset,scope:this.scope(cwd),before,after,maxBytes,meta:{kind:'report',runId,targets:[]}});
+  if(committed&&relative==='DREAMS.md'){
+   // Keep DREAMS.md bounded: blocks older than the retention window move to
+   // memory/history/dreams/<month>.md. Pruning must never lose the Dream that
+   // was just committed, so failures are swallowed on purpose.
+   try{archiveDreamBlocks({cwd,today:blockId.replace(/^dream-/,''),retentionDays:this.getConfig().dreamRetentionDays});}catch{}
+  }
+  return committed;
  }
  async run(cwd,kind='dream',{signal,agent,sourceSessionId,draftOnly=false,onStart,timeZone=this.getConfig().timeZone,day=localDay(Date.now(),timeZone)}={}){
   if(!['daily','dream','weekly'].includes(kind)||!/^\d{4}-\d{2}-\d{2}$/.test(day))throw new Error('记忆任务类型或日期无效');if(this.closed||!this.getConfig().enabled)throw new Error('记忆整理已停用');
