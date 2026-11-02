@@ -52,6 +52,12 @@ export default class MemoryDreaming extends PluginConfig {
     const maintenance=exec.agent.session.id===this.sessionId(cwd),kind=args.kind??'dream';
     const scheduled=maintenance?this.workflows.current(exec.agent.session.id,kind).filter(row=>row.origin!=='manual'):[];
     if(maintenance&&!this.configFile.value.automatic&&scheduled.length){for(const row of scheduled)this.workflows.set(row.id,'cancelled','自动归档已关闭，本次记忆作业未执行。');if(!this.workflows.current(exec.agent.session.id,kind).some(row=>row.origin==='manual'))return{state:'cancelled',artifacts:[],message:'自动归档已关闭。'};}
+    // An explicit date is a backfill request: run it through the maintenance
+    // Session, exactly like the Dream page's manual button, so the result is a
+    // real artifact instead of a draft. Without a date the owner still gets the
+    // read-only draft, and every non-maintenance caller has already passed the
+    // owner check in this tool's entry point.
+    if(!maintenance&&typeof args.day==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(args.day))return this.startMemory(kind,args.day);
     if(!maintenance)return this.memory.run(cwd,kind,{signal:exec.signal,agent:exec.agent,day:args.day,sourceSessionId:exec.agent.session.id,draftOnly:true});
     const result=await this.workflows.run(cwd,kind,exec,{signal:exec.signal,agent:exec.agent,day:args.day});
     if(kind==='weekly'&&result?.state==='completed'&&this.configFile.value.historyAutoArchive){

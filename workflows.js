@@ -178,8 +178,28 @@ export class WorkflowLedger {
  verifyResult(row){
   const job=this.result(row);if(job?.state!=='completed'||job.value?.state!=='completed')throw new Error('没有已完成的记忆运行记录。');
   if(job.value.empty||job.value.draftOnly)return job.value;
-  for(const artifact of job.value.artifacts??[]){if(typeof artifact.path!=='string'||typeof artifact.hash!=='string')throw new Error('产物记录缺少校验值。');const current=readBounded(safePath(row.cwd,artifact.path),1048576),latest=this.db.prepare('SELECT afterHash FROM artifacts WHERE scope=? AND path=? ORDER BY id DESC LIMIT 1').get(row.scope,artifact.path);if(current===null||digest(current)!==(latest?.afterHash??artifact.hash))throw new Error('已提交的记忆产物缺失或出现外部修改。');}
+  for(const artifact of job.value.artifacts??[]){if(typeof artifact.path!=='string'||typeof artifact.hash!=='string')throw new Error('产物记录缺少校验值。');const current=this.readArtifact(row.cwd,artifact.path),latest=this.db.prepare('SELECT afterHash FROM artifacts WHERE scope=? AND path=? ORDER BY id DESC LIMIT 1').get(row.scope,artifact.path);if(current===null||digest(current)!==(latest?.afterHash??artifact.hash))throw new Error('已提交的记忆产物缺失或出现外部修改。');}
   return job.value;
+ }
+ /**
+  * Read an artifact at its recorded path, falling back to the copies the
+  * archive flows create. Daily files move to `memory/.archive/daily/` and
+  * `memory/history/daily/<year>/<day>--<digest>.md`, so a path that no longer
+  * exists at its original location is not a missing artifact. Only the daily
+  * layout is recognised; every other path fails exactly as it did before.
+  */
+ readArtifact(cwd,relative){
+  const direct=readBounded(safePath(cwd,relative),1048576);
+  if(direct!==null)return direct;
+  const day=/^memory\/(\d{4}-\d{2}-\d{2})\.md$/.exec(relative)?.[1];
+  if(!day)return null;
+  const archived=readBounded(safePath(cwd,'memory/.archive/daily/'+day+'.md'),1048576);
+  if(archived!==null)return archived;
+  try{
+   const folder='memory/history/daily/'+day.slice(0,4);
+   const name=fs.readdirSync(safePath(cwd,folder)).find(item=>item.startsWith(day+'--')&&item.endsWith('.md'));
+   return name?readBounded(safePath(cwd,folder+'/'+name),1048576):null;
+  }catch{return null;}
  }
  finish(row,reason,seq){
   this.db.prepare('UPDATE workflows SET endSeq=? WHERE id=?').run(seq,row.id);
