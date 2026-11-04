@@ -24,14 +24,14 @@ function fixture(now=Date.parse('2026-10-13T00:00:00Z')){
 test('active weekly, current daily and imported archive all share one lookup',async()=>{
  const t=fixture();
  try{
-  t.write('memory/2026-10-12.md','# 当日记录\n讨论 OpenClaw 和 dsh-memory 的兼容方案。');
+  t.write('memory/2026-10-12.md','# 当日记录\n讨论 ProjectX 和 dsh-memory 的兼容方案。');
   t.write('memory/weekly/2026-10-05_2026-10-11.md','# 周记\n这周完成 Discord 用户交互修复和渠道验收。');
   t.write('memory/history/daily/2026/2026-09-20--a13db180f219.md','# 旧版日志\n飞书渠道曾经处理过 CardKit 卡片。');
   t.write('memory/history/weekly/2025/2025-10-01_2025-10-07.md','# 历史周记\n当时建立了日记持久化计划。');
   t.write('memory/history/daily/2025/2025-10-02.md','# 永久日记\n这天记录了深夜任务调度排查。');
   const state=t.index.sync(t.root);
   assert.equal(state.scanned,5);
-  for(const [keyword,expected] of [['OpenClaw','memory/2026-10-12.md'],['Discord','memory/weekly/2026-10-05_2026-10-11.md'],['CardKit','memory/history/daily/2026/2026-09-20--a13db180f219.md'],['持久化','memory/history/weekly/2025/2025-10-01_2025-10-07.md'],['调度排查','memory/history/daily/2025/2025-10-02.md']]){
+  for(const [keyword,expected] of [['ProjectX','memory/2026-10-12.md'],['Discord','memory/weekly/2026-10-05_2026-10-11.md'],['CardKit','memory/history/daily/2026/2026-09-20--a13db180f219.md'],['持久化','memory/history/weekly/2025/2025-10-01_2025-10-07.md'],['调度排查','memory/history/daily/2025/2025-10-02.md']]){
    const rows=await t.index.search(t.root,keyword,{semantic:false});
    assert(rows.some(row=>row.source.path===expected),keyword);
    assert(rows.every(row=>row.source.reviewed===false));
@@ -39,7 +39,7 @@ test('active weekly, current daily and imported archive all share one lookup',as
  }finally{t.close();}
 });
 test('year-old week creates a verified, non-destructive snapshot and search deduplicates copies',async()=>{
- const t=fixture(),text='# 周记\n长期记忆讨论 OpenClaw 迁移与计划方案。';
+ const t=fixture(),text='# 周记\n长期记忆讨论 ProjectX 迁移与计划方案。';
  try {
   const old=t.write('memory/weekly/2025-01-06_2025-01-12.md',text);
   fs.utimesSync(old,new Date('2025-02-01T00:00:00Z'),new Date('2025-02-01T00:00:00Z'));
@@ -51,7 +51,7 @@ test('year-old week creates a verified, non-destructive snapshot and search dedu
   assert.equal(fs.readFileSync(path.join(t.root,'memory/history/weekly/2025/2025-01-06_2025-01-12.md'),'utf8'),text);
   assert.equal(t.archive.snapshot(t.root,{days:365}).copied,0);
   t.index.sync(t.root);
-  const rows=await t.index.search(t.root,'OpenClaw',{semantic:false});
+  const rows=await t.index.search(t.root,'ProjectX',{semantic:false});
   assert.equal(rows.length,1,'original and archive must not appear twice');
   assert.equal(rows[0].source.path,'memory/history/weekly/2025/2025-01-06_2025-01-12.md');
  }finally{t.close();}
