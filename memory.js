@@ -203,7 +203,7 @@ export class Memory {
      :diagnostics.previouslyProcessed>0?'already-processed':diagnostics.dateExcluded>0?'outside-day'
      :diagnostics.otherMessage>0?'not-user-input':'no-usable-text';
     const explanations={
-     'channel-untrusted':'发现渠道会话，但主人身份尚未通过 Channel Core 核验，因此未读取其私聊内容。',
+     'channel-untrusted':'发现渠道会话，但未通过 Channel Core 的群聊来源或主人身份核验，因此未读取其内容。',
      'workspace-scope':'未找到当前记忆工作区内可访问的会话；请核对 Discord 会话所属工作区。',
      'outside-day':'会话中有用户消息，但不在本次日期范围内（'+day+'，时区 '+timeZone+'）。',
      'already-processed':'本次范围内的消息已经整理过，增量模式不会重复整理。',
@@ -265,8 +265,8 @@ export class Memory {
  }
  async verify(cwd,id,signal){
   const candidate=this.candidates(cwd).find(item=>item.id===id);if(!candidate)throw new Error('候选不存在');for(const source of candidate.sources){signal?.throwIfAborted();if(this.db.prepare('SELECT 1 FROM forgotten WHERE scope=? AND session=?').get(this.scope(cwd),source.sessionId))throw new Error('来源会话已排除');
-   if(channelSessionIds(this.ctx).has(source.sessionId)&&!ownerChannelAuthorized(this.ctx,source.sessionId,this.getConfig()))throw new Error('渠道来源未被核验为记忆主人，不能发布到共享记忆');
-   const observation=await this.ctx.sessionQuery.observeSession(source.sessionId,{signal});try{if(!observation.header.cwd||!withinMemoryWorkspace(cwd,observation.header.cwd))throw new Error('候选来源不属于当前记忆工作区');if(!publicMemorySourceAllowed(source.sessionId,channelSessionIds(this.ctx),observation.header)&&!ownerChannelAuthorized(this.ctx,source.sessionId,this.getConfig()))throw new Error('渠道来源未被核验为记忆主人，不能发布');const event=observation.events.find(event=>event.seq===source.seq);if(!event||!eligibleMessage(event,observation.inheritedEventCount??0)||!redact(textOf(event)).includes(source.quote))throw new Error('候选来源已变化或删除，请重新整理');}finally{observation[Symbol.dispose]?.();}
+   if(channelSessionIds(this.ctx).has(source.sessionId)&&!ownerChannelAuthorized(this.ctx,source.sessionId,this.getConfig()))throw new Error('渠道来源未通过共享记忆授权核验，不能发布到共享记忆');
+   const observation=await this.ctx.sessionQuery.observeSession(source.sessionId,{signal});try{if(!observation.header.cwd||!withinMemoryWorkspace(cwd,observation.header.cwd))throw new Error('候选来源不属于当前记忆工作区');if(!publicMemorySourceAllowed(source.sessionId,channelSessionIds(this.ctx),observation.header)&&!ownerChannelAuthorized(this.ctx,source.sessionId,this.getConfig()))throw new Error('渠道来源未通过共享记忆授权核验，不能发布');const event=observation.events.find(event=>event.seq===source.seq);if(!event||!eligibleMessage(event,observation.inheritedEventCount??0)||!redact(textOf(event)).includes(source.quote))throw new Error('候选来源已变化或删除，请重新整理');}finally{observation[Symbol.dispose]?.();}
   }return candidate;
  }
  async approve(cwd,id,confirmation,signal,runId=null){await this.verify(cwd,id,signal);signal?.throwIfAborted();return this.promote(cwd,id,confirmation,runId);}

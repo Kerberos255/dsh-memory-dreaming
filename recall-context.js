@@ -101,7 +101,7 @@ export function authorizedRecallScope(session,ctx,config){
   const preset=ctx.get?.('sessionProjections')?.stateOf(session,'agentPreset')??session.header.agentPreset;
   // Agent presets do not partition a single owner's workspace memory.
   if(typeof preset!=='string')return false;
-  // Do not allow shared workspace memories to pass into other users' channels.
+  // Share within proven groups and owner DMs only; a matching workspace alone is insufficient.
   const channel=isUntrustedChannel(ctx,session)||channelSessionIds(ctx).has(session.id);
   if(channel&&!ownerChannelAuthorized(ctx,session.id,config))return false;
   try{

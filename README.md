@@ -22,7 +22,7 @@ The original native DSH session log remains the evidence source. Candidate memor
 
 ## Semantic recall and historical archives
 
-Automatic recall of **verified, source-backed long-term memory** can use keyword, semantic-fallback, or hybrid matching (`autoRecallMode`). Embedding failures fall back to lexical retrieval; content from unverified history never enters trusted automatic recall.
+Automatic recall of **verified, source-backed long-term memory** can use keyword, semantic-fallback, or hybrid matching (`autoRecallMode`). Embedding failures fall back to lexical retrieval; content from unverified history never enters trusted automatic recall. Verified owner DMs and durably bound Feishu/Discord group or thread sessions may access the same workspace's published memory. Unverified private DMs stay isolated; group members can potentially receive private facts in bot replies. Restrict channel admission to trusted groups.
 
 The single read-only `memory_search` model tool supports `action: 'search'` (default, compatible with existing queries) and `action: 'topics'` (the verified topic index). The plugin maintains a scoped, incremental SQLite index for explicit `memory_search` over curated archives under `memory/history/{daily,weekly,monthly,notes}/`. Only these structured Markdown paths are scanned; account/configuration files and migrated raw sessions are excluded. Rolling daily/weekly maintenance preserves permanent archive copies according to the history settings. No user archives or migration scripts are included in this public package.
 
@@ -44,7 +44,7 @@ Use your actual profile and restart after installing or updating code.
 2. Start with the manual daily/Dream/weekly actions and inspect eligible-source diagnostics and proposed facts.
 3. Review the candidate list and publish verified facts, or deliberately enable automatic promotion with its evidence checks.
 4. Enable the built-in DSH scheduled jobs only when wanted; **scheduled processing and automatic fact promotion are off by default**.
-5. For private Discord/Feishu sources, configure [Channel Core](https://github.com/Kerberos255/dsh-channel-core) owner verification first.
+5. For private Discord/Feishu sources, configure [Channel Core](https://github.com/Kerberos255/dsh-channel-core) owner verification first. Group/thread memory sharing uses Channel Core's durable bindings rather than private-DM identity.
 
 By default, published facts can be recalled automatically in small bounded amounts. The plugin supports keyword retrieval without an embedding model; an optional embedding provider may improve semantic matching.
 
@@ -52,7 +52,7 @@ By default, published facts can be recalled automatically in small bounded amoun
 
 State and write recovery are managed in local SQLite under DSH data; managed journals, Dream output and `MEMORY.md` remain regular workspace Markdown. Source identity, workspace authorization, incremental cursors, atomic writes, and hash checks protect publication and cleanup. Archived eligible daily entries are retained temporarily before removal; human-edited files are preserved.
 
-An on-demand `memory_dream` tool is **not** permission to inspect unrelated private conversations. Live model and scheduling results must be checked in DSH; standalone CI covers mock-based behavior.
+An on-demand `memory_dream` tool reads only its own session to create review-only drafts; group or thread sessions can do so too. It does **not** grant access to unrelated private conversations. Published memory remains subject to source verification and the normal review or promotion rules. Live model and scheduling results must be checked in DSH; standalone CI covers mock-based behavior.
 
 ## Development
 

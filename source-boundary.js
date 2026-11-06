@@ -28,11 +28,14 @@ export function publicMemorySourceAllowed(sessionId,channelIds,header){
     &&header?.origin!=='channel';
 }
 
-/** Read-only permission check against Channel Core's explicit verified identity.
- * A shared workspace or allow-all bot configuration is never sufficient.
+/** Read-only channel authorization: verified owner DM or durable group/thread
+ * provenance. Other DMs, spoofed origins and unbound sessions stay blocked.
  */
 export function ownerChannelAuthorized(ctx,sessionId,config){
-  if(!config?.ownerIdentityId||!sessionId)return false;
-  try{return ctx.get?.('channelCore')?.trustedMemorySession?.(sessionId,config.ownerIdentityId)===true;}
-  catch{return false;}
+  if(!sessionId)return false;
+  try{
+    const core=ctx.get?.('channelCore');
+    if(core?.sharedGroupMemorySession?.(sessionId)===true)return true;
+    return !!config?.ownerIdentityId&&core?.trustedMemorySession?.(sessionId,config.ownerIdentityId)===true;
+  }catch{return false;}
 }

@@ -38,7 +38,7 @@ export default class MemoryDreaming extends PluginConfig {
   ctx.on('schedule/changed',()=>{
    if(this.scheduleScope&&this.configFile.value.automatic)this.reconcileLater();
   },{global:true});
-  // Agent-scoped trusted memory context; other users' channel Sessions are excluded.
+  // Agent-scoped memory: owner DMs and proven groups share the workspace; other DMs stay excluded.
   ctx.on('agent/created',({agent})=>{attachAutoRecall(agent,this,ctx);restrictMaintenanceTools(agent);},{global:true});
   ctx.on('agent/inbox/claimed',({agent,message,turn})=>{const preset=ctx.get('sessionProjections')?.stateOf(agent.session,'agentPreset')??agent.session.header.agentPreset;this.workflows.claim(this.workflows.identity(agent.session.header,preset),message,turn);},{global:true});
   ctx.on('user-questions/request',(request,next)=>this.waiting(request,next,'awaiting-user'),{global:true,prepend:true});
@@ -69,7 +69,7 @@ export default class MemoryDreaming extends PluginConfig {
    for(const [name,description,properties,execute]of tools)scope.tools.register({name,description,parameters:{type:'object',properties,additionalProperties:false},output:{schema:{type:'object',additionalProperties:true},render:(_args,value)=>[{type:'text',text:JSON.stringify(value)}]},execute:async(args,exec)=>{
     exec.signal.throwIfAborted();if(!this.configFile.value.enabled||!exec.agent)throw new Error('记忆插件已停用');const cwd=exec.agent.session.header.cwd,preset=ctx.get('sessionProjections')?.stateOf(exec.agent.session,'agentPreset');
     if(!cwd||typeof preset!=='string')throw new Error('当前会话缺少有效工作区或 Agent 预设');
-    if((isUntrustedChannel(ctx,exec.agent.session)||channelSessionIds(ctx).has(exec.agent.session.id))&&!ownerChannelAuthorized(ctx,exec.agent.session.id,this.configFile.value))throw new Error('当前渠道会话未关联记忆主人身份，暂不能读取共享记忆');
+    if((isUntrustedChannel(ctx,exec.agent.session)||channelSessionIds(ctx).has(exec.agent.session.id))&&!ownerChannelAuthorized(ctx,exec.agent.session.id,this.configFile.value))throw new Error('当前渠道会话未通过共享记忆授权检查');
     if(name!=='memory_dream'&&!this.configFile.value.recall)throw new Error('记忆检索已停用');
     const signal=AbortSignal.any([exec.signal,this.abort.signal,this.configAbort.signal]),task=execute(args,{...exec,signal},cwd);this.tasks.add(task);try{return await task;}finally{this.tasks.delete(task);}
    }});
