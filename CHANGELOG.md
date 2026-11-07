@@ -10,7 +10,7 @@
 - Admit authorized group messages as source-backed daily memory and review-only drafts, without bypassing source verification, approval, or cross-workspace boundaries. Other users' private DMs remain isolated.
 
 
-Historical updates previously mixed into README are collected here. Current behavior and installation: [English](README.md) / [简体中文](README.zh-CN.md).
+Historical updates previously mixed into README are collected here. Current behavior and installation: [English](README.en.md) / [简体中文](README.md).
 
 - **Source diagnostics:** distinguishes wrong day, unsupported event types, untrusted channels, and already-processed messages when no new input is eligible.
 - **Workspace-wide batching:** traverses eligible sessions across presets and nested workspaces; splits work into bounded model calls and commits only complete results.
