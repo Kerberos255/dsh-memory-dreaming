@@ -7,6 +7,7 @@ import { HistoryArchive } from './history-archive.js';
 import { workspace,scopeId } from './workspace-io.js';
 import { WorkflowLedger } from './workflows.js';
 import { MemorySchedules } from './schedules.js';
+import { compatibleSchedule } from './schedule-host-compat.js';
 import { startManualMemory } from './manual-run.js';
 import { maintenanceToolDenial, restrictMaintenanceTools } from './session-setup.js';
 import { attachAutoRecall,isUntrustedChannel } from './recall-context.js';
@@ -30,7 +31,7 @@ export default class MemoryDreaming extends PluginConfig {
   this.workflows=new WorkflowLedger(this.memory,ctx);this.schedules=new MemorySchedules(this.memory,ctx,undefined,this.workflows);this.workflowError='';this.workflowReady=this.workflows.recover(this.abort.signal).catch(error=>{if(!this.abort.signal.aborted){this.workflowError='原生任务记录暂不可核对。';ctx.get('pluginDiagnostics')?.record('dsh-memory-dreaming','error','workflow.recover-failed',{code:error?.code});}});this.tasks.add(this.workflowReady);this.workflowReady.finally(()=>this.tasks.delete(this.workflowReady)).catch(()=>{});
   for(const initialize of initializers)initialize.call(this);
   this.configFile.subscribe(()=>{this.configAbort.abort();this.configAbort=new AbortController();for(const abort of this.memory.running.values())abort.abort();this.reconcileLater();});
-  ctx.inject(['schedule','sessionController'],scope=>{this.scheduleScope=scope;this.scheduleService=scope.schedule;this.reconcileLater();scope.effect(()=>()=>{if(this.scheduleScope===scope)this.scheduleScope=null;});});
+  ctx.inject(['schedule','sessionController'],scope=>{const bound={schedule:compatibleSchedule(scope.schedule),sessionController:scope.sessionController};this.scheduleScope=bound;this.scheduleService=bound.schedule;this.reconcileLater();scope.effect(()=>()=>{if(this.scheduleScope===bound)this.scheduleScope=null;});});
   ctx.on('session/event',(session,event)=>this.event(session,event),{global:true});
   // Native Schedule emits after durable deletion on archive/Session stop.
   // Reconcile also detects missing Sessions. A user-deleted task in an existing
@@ -43,7 +44,10 @@ export default class MemoryDreaming extends PluginConfig {
   ctx.on('agent/inbox/claimed',({agent,message,turn})=>{const preset=ctx.get('sessionProjections')?.stateOf(agent.session,'agentPreset')??agent.session.header.agentPreset;this.workflows.claim(this.workflows.identity(agent.session.header,preset),message,turn);},{global:true});
   ctx.on('user-questions/request',(request,next)=>this.waiting(request,next,'awaiting-user'),{global:true,prepend:true});
   ctx.on('approval/request',(request,next)=>this.waiting(request,next,'awaiting-approval'),{global:true,prepend:true});
-  ctx.effect(()=>async()=>{this.abort.abort();this.workflows.close();for(const abort of this.memory.running.values())abort.abort();await Promise.allSettled([...this.tasks,this.queue]);const schedule=this.scheduleService;if(schedule&&!schedule.stopping)try{await this.schedules.stop(schedule);}catch(error){console.warn('[dsh-memory-dreaming] 自动任务收尾失败：',error.message);}await this.memory.close();this.history.close();});
+   ctx.effect(()=>async()=>{this.abort.abort();this.workflows.close();for(const abort of this.memory.running.values())abort.abort();await Promise.allSettled([...this.tasks,this.queue]);
+     // Native scheduled tasks are durable: a Host restart or plugin reload must never delete them.
+     // Deliberately disabling automatic scheduling still retires owned tasks via reconcile().
+     await this.memory.close();this.history.close();});
   ctx.inject(['tools'],scope=>{
    // Scheduled maintenance Sessions may only invoke the typed memory_dream tool.
    // Denial is monotonic; it never auto-approves shell access or other permissions.
